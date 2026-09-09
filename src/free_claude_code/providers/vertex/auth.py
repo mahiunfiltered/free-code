@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Renewable Google Application Default Credentials for Vertex AI."""
 
 import asyncio

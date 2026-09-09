@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared provider lifecycle contracts.
 
 Ordinary OpenAI-compatible vendors are immutable profiles. Concrete adapter

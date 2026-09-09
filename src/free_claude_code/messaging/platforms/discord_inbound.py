@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Discord inbound event normalization."""
 
 from typing import Any

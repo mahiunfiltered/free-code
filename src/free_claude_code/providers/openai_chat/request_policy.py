@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Request-body policy for OpenAI-compatible chat providers."""
 
 from collections.abc import Callable, Iterable

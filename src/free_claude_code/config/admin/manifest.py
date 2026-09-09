@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Admin configuration manifest."""
 
 from collections.abc import Iterable

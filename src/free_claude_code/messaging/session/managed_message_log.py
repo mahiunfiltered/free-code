@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Persist platform messages belonging to FCC-managed conversations."""
 
 from datetime import UTC, datetime

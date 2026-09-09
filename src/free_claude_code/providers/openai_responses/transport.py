@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Standard API-key OpenAI Responses execution over the official SDK."""
 
 import asyncio

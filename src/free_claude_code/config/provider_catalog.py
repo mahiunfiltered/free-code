@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Neutral provider catalog: IDs, credentials, defaults, proxy and capability metadata.
 
 Adapter factories live in :mod:`providers.runtime.factory`; this module stays free of
@@ -161,6 +163,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="cline_api_key",
         default_base_url=CLINE_DEFAULT_BASE,
         proxy_attr="cline_pass_proxy",
+    ),
+    "openai_api": ProviderDescriptor(
+        provider_id="openai_api",
+        display_name="OpenAI API",
+        credential_env="OPENAI_API_KEY",
+        credential_url="https://platform.openai.com/api-keys",
+        credential_attr="openai_api_key",
+        default_base_url=OPENAI_DEFAULT_BASE,
+        base_url_attr="openai_base_url",
+        proxy_attr="openai_proxy",
     ),
     "openai": ProviderDescriptor(
         provider_id="openai",

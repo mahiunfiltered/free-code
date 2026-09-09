@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Platform-agnostic message models."""
 
 from dataclasses import dataclass, field

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Runtime-owned queued delivery for one messaging platform."""
 
 import asyncio

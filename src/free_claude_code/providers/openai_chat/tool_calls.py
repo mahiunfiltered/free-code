@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """OpenAI-chat tool-call assembly helpers."""
 
 import json

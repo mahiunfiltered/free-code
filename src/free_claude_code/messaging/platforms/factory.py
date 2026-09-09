@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Messaging platform component factory."""
 
 from dataclasses import dataclass

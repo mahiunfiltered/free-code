@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Platform-neutral lifecycle for the FCC desktop shell."""
 
 import threading

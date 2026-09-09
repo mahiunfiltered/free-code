@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Block finalization for OpenAI Responses streams."""
 
 from collections.abc import Callable

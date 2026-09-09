@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Provider model-list response parsing helpers."""
 
 from collections.abc import Iterable, Mapping, Sequence

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """NVIDIA NIM request option injection."""
 
 from copy import deepcopy

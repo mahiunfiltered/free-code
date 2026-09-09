@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Implementations for installed Free Claude Code commands."""
 
 import threading

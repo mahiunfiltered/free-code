@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Provider-owned stream holdback and recovery decisions."""
 
 import time

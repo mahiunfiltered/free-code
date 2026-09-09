@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Settings-backed Admin config validation."""
 
 from collections.abc import Mapping

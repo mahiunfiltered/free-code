@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Platform-agnostic messaging layer."""
 
 from .managed_protocols import (

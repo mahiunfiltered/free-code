@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Google Vertex AI OpenAI-compatible adapter."""
 
 from .client import VertexProvider

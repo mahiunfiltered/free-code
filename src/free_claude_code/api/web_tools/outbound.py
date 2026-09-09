@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Outbound HTTP for web_search / web_fetch (client, body caps, logging)."""
 
 import asyncio

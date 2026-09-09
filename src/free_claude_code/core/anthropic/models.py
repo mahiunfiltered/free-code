@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Pydantic models for the Anthropic Messages protocol."""
 
 from typing import Any, Literal

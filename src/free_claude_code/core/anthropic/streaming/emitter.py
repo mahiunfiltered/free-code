@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Anthropic SSE serialization helpers."""
 
 import json

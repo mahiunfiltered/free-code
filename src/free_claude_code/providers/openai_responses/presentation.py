@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Client-protocol presenters shared by Responses upstream transports."""
 
 from collections.abc import Callable, Iterable

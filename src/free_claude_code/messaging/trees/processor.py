@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Task execution for claims returned by messaging tree aggregates."""
 
 import asyncio

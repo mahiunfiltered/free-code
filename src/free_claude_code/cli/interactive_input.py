@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Windows console mode hardening, Win32 clipboard integration, and interactive multiline prompt engine."""
 
 import ctypes

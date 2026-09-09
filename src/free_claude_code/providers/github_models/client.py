@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """GitHub Models provider using OpenAI-compatible chat completions."""
 
 from collections.abc import Mapping, Sequence

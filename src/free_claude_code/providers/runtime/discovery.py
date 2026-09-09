@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Provider model-list discovery and background refresh."""
 
 import asyncio

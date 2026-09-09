@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Build Codex model catalogs from the FCC model-list route."""
 
 import json

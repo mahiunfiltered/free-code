@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Platform rendering profiles for messaging transcripts and status text."""
 
 from collections.abc import Callable

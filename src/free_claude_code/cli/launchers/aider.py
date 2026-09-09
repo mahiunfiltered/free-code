@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Installed `fcc-aider` launcher for the official Aider CLI."""
 
 import json

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared HTTP lifecycle helpers for upstream provider clients."""
 
 import asyncio

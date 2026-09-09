@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Recover from upstream ``max_(completion_)tokens`` too-large 400 rejections.
 
 Some OpenAI-compatible providers (Groq, NVIDIA NIM, ...) cap the per-request

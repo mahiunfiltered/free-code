@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Resolve client reasoning input and FCC configuration exactly once."""
 
 from collections.abc import Mapping

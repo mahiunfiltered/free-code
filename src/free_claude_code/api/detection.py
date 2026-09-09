@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Request detection utilities for API optimizations.
 
 Detects quota checks, title generation, prefix detection, safety classifier,

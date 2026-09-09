@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """OpenRouter provider implementation."""
 
 from free_claude_code.application.model_metadata import ProviderModelInfo

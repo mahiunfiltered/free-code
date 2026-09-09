@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Model routing for Claude-compatible requests."""
 
 from dataclasses import dataclass

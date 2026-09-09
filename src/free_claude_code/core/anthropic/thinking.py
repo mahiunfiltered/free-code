@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Streaming parser for provider-emitted thinking tags."""
 
 from collections.abc import Iterator

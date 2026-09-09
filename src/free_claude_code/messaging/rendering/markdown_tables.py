@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared Markdown table pre-normalization for platform renderers."""
 
 import re

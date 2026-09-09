@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared Google behavior for OpenAI-compatible Gemini endpoints."""
 
 from collections.abc import Mapping

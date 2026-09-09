@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Configuration management."""
 
 from .loader import clear_settings_cache, get_settings, resolve_settings_snapshot

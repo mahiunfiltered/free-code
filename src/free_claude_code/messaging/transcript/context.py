@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Rendering context used by transcript segments."""
 
 from collections.abc import Callable

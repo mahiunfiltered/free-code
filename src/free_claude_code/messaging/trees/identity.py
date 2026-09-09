@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Stable and runtime identities for messaging conversation trees."""
 
 from dataclasses import dataclass

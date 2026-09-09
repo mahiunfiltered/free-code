@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Structured DEBUG traces for end-to-end request / CLI / provider logging.
 
 Emitted lines are merged into JSON log rows by ``config.logging_config``.

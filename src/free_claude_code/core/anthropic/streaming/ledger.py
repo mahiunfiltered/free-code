@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Anthropic stream state ledger."""
 
 import hashlib

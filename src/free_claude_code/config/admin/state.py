@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Typed effective-value state shared by Admin configuration services."""
 
 from dataclasses import dataclass

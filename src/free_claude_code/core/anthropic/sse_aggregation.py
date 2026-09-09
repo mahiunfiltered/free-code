@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Fold an Anthropic Messages SSE stream into a single JSON Message body.
 
 Used when client requests omit ``stream`` or set ``stream: false``. The internal

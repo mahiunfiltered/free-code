@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """One provider decision for Claude Code's automatic WebSearch request."""
 
 import sys

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """User-configurable reasoning policy values."""
 
 from enum import StrEnum

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """ChatGPT Codex backend provider using OpenAI Responses."""
 
 import asyncio

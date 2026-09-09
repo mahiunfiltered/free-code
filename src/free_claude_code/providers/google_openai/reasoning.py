@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Exclusive reasoning encoders for Google OpenAI-compatible endpoints."""
 
 from dataclasses import dataclass

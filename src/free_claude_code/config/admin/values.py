@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Admin config value state and API response assembly."""
 
 import os

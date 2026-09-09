@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Base provider interface - extend this to implement your own provider."""
 
 from abc import ABC, abstractmethod

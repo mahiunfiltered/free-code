@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Identifier helpers for OpenAI Responses payloads."""
 
 import uuid

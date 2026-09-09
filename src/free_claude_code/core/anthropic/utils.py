@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Small shared protocol utility helpers."""
 
 from typing import Any

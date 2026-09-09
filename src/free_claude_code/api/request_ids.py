@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Ingress-owned HTTP request correlation."""
 
 import uuid

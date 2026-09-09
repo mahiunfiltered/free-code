@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """OpenCode catalog-aware provider family."""
 
 from .provider import OpenCodeProvider, create_opencode_provider

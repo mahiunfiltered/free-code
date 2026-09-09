@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """OpenAI Responses SSE event formatting."""
 
 import json

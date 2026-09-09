@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Installed `fcc-claude` launcher."""
 
 import os

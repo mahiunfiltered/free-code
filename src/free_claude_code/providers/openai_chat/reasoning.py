@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Provider-owned reasoning translations for OpenAI-compatible APIs."""
 
 from dataclasses import dataclass

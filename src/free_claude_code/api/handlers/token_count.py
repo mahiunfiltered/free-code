@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Anthropic token-count API product flow."""
 
 from fastapi import HTTPException

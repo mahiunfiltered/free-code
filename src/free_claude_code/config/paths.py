@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared filesystem paths for Free Claude Code configuration."""
 
 from pathlib import Path

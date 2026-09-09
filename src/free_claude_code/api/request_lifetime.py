@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Client-owned lifetime boundary for long-running inference requests."""
 
 import asyncio

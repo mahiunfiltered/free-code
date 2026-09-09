@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """DeepSeek provider implementation (OpenAI-compatible Chat Completions)."""
 
 from typing import Any

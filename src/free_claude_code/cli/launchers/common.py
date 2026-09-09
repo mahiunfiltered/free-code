@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared process helpers for installed client CLI launchers."""
 
 import shutil
@@ -74,14 +76,35 @@ def run_client_process(
     display_name: str,
     install_hint: str,
     legacy_console_paste: bool = False,
+    stdin_payload: str | None = None,
 ) -> None:
-    """Run a client CLI command and mirror its exit code."""
+    """Run a client CLI command and mirror its exit code with large prompt and isolation support."""
 
     import signal
+    import threading
 
     process: subprocess.Popen[bytes] | None = None
     old_sigint = None
     paste_bridge = None
+    
+    # Check if a large prompt is passed via -p / --print on Windows (> 2048 chars)
+    # If so, convert it to stdin delivery to prevent exceeding the 32,767 char cmdline limit
+    effective_command = list(command)
+    effective_stdin = stdin_payload
+    
+    for flag in ("-p", "--print"):
+        if flag in effective_command:
+            idx = effective_command.index(flag)
+            if idx + 1 < len(effective_command):
+                prompt_val = effective_command[idx + 1]
+                if len(prompt_val) > 2048 or (sys.platform == "win32" and "\n" in prompt_val and len(prompt_val) > 1024):
+                    # Extract to stdin
+                    if effective_stdin is None:
+                        effective_stdin = prompt_val
+                        effective_command.pop(idx + 1)
+                        effective_command.pop(idx)
+                    break
+
     try:
         if sys.platform == "win32":
             # On Windows, configure console modes for UTF-8 and VT I/O
@@ -113,9 +136,28 @@ def run_client_process(
             except (ValueError, OSError):
                 old_sigint = None
 
-        process = subprocess.Popen(command, env=dict(env))
+        popen_kwargs: dict = {
+            "env": dict(env),
+        }
+        if effective_stdin is not None:
+            popen_kwargs["stdin"] = subprocess.PIPE
+
+        process = subprocess.Popen(effective_command, **popen_kwargs)
         if process.pid:
             register_pid(process.pid)
+
+        # Stream stdin payload if present
+        if effective_stdin is not None and process.stdin:
+            def _write_stdin():
+                try:
+                    process.stdin.write(effective_stdin.encode("utf-8"))
+                    process.stdin.flush()
+                    process.stdin.close()
+                except Exception:
+                    pass
+            t = threading.Thread(target=_write_stdin, daemon=True)
+            t.start()
+
         return_code = process.wait()
     except FileNotFoundError:
         print(

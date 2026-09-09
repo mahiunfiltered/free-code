@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Process-local Cline CLI configuration for FCC model routing."""
 
 from dataclasses import dataclass, field

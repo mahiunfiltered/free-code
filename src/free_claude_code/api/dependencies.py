@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """FastAPI dependencies for the explicit runtime service boundary."""
 
 import secrets

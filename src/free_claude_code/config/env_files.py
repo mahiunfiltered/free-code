@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Managed and legacy dotenv discovery helpers."""
 
 import os

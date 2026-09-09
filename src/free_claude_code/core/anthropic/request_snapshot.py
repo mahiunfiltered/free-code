@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Trace-safe snapshots of Anthropic protocol requests."""
 
 from typing import Any

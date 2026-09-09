@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Deterministic application and readiness errors."""
 
 from collections.abc import Iterable

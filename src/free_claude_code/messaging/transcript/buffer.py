@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Transcript event application and open-block tracking."""
 
 from typing import Any

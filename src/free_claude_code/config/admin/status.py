@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Provider configuration status for the Admin UI."""
 
 from collections.abc import Mapping

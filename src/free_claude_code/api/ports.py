@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Runtime capabilities consumed by the HTTP API adapter."""
 
 from collections.abc import Mapping

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Installed `fcc-grok` launcher for attached Grok Build sessions."""
 
 import json

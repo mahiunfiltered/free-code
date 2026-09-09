@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """DeepSeek Anthropic-to-OpenAI chat request policy."""
 
 from collections.abc import Mapping

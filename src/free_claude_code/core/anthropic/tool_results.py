@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Structured Anthropic tool-result content."""
 
 import json

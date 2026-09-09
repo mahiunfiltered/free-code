@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Platform-neutral voice note helpers."""
 
 import asyncio

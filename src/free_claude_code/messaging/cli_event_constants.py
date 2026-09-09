@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """CLI event types and status-line mapping for transcript / UI updates."""
 
 from collections.abc import Callable

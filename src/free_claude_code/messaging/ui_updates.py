@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Throttled platform UI updates driven by transcript rendering."""
 
 import time

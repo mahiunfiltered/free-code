@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """NVIDIA NIM / Riva offline ASR for voice notes (provider-owned transport)."""
 
 import asyncio

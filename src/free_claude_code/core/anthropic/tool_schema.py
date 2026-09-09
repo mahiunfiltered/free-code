@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """JSON Schema helpers for text-emitted Anthropic tool input."""
 
 import json

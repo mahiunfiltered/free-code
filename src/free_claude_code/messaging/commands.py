@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Command handlers for messaging platform commands (/stop, /stats, /clear).
 
 Commands depend on MessagingCommandContext instead of the concrete workflow.

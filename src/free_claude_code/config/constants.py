@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared defaults used by config models and provider adapters."""
 
 # HTTP client connect timeout (seconds). Keep aligned with README.md and .env.example.

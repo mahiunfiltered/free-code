@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Single production composition root for the FCC server."""
 
 import os

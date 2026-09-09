@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Product-flow handlers for public API routes."""
 
 from .messages import MessagesHandler

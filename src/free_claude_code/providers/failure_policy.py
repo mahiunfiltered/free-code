@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Provider-owned SDK classification and retry qualification."""
 
 import json

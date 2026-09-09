@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Messaging platform ports used by the customer-facing workflow."""
 
 from collections.abc import Awaitable, Callable

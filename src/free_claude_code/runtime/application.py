@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Single owner for application startup, shutdown, and runtime operations."""
 
 import asyncio

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Serializable messaging conversation snapshots."""
 
 from dataclasses import dataclass, field

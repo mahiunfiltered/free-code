@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """NVIDIA NIM settings (fixed values, no env config)."""
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator

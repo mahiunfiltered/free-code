@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Native OpenAI Responses request and event handling."""
 
 import uuid

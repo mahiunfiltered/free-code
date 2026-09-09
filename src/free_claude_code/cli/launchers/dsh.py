@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Installed `fcc-dsh` launcher for attached DeepSeek Harness sessions."""
 
 import json

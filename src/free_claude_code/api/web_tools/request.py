@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Recognize the narrow Anthropic web-tool requests FCC can execute locally."""
 
 import re

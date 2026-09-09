@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """NVIDIA NIM retry-body downgrade helpers."""
 
 from collections.abc import Callable

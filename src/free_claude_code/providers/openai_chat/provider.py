@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Concrete OpenAI-compatible provider and per-request stream execution."""
 
 import asyncio

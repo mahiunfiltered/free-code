@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Validation helpers for OpenAI-chat ``extra_body`` passthrough."""
 
 from typing import Any

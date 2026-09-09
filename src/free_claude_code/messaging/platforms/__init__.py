@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Messaging platform runtimes and ports."""
 
 from .factory import MessagingPlatformOptions, create_messaging_components

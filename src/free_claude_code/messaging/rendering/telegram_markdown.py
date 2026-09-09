@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Telegram MarkdownV2 utilities.
 
 Renders common Markdown into Telegram MarkdownV2 format.

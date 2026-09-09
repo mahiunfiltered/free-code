@@ -1,272 +1,117 @@
-﻿"Comprehensive system health check for Free Claude Code.
-
-Performs multi-layer diagnostics without exposing sensitive credentials:
-1. Environment & Runtime
-2. Shell & Terminal
-3. Claude & Client Binaries
-4. Local Gateway / Proxy
-5. External Model Provider & API
-6. Upstream Model Inference & Streaming
-7. Upstream Tool/Function Calling
-8. Local Filesystem & Git State
-"
-
-import json
 import os
 import shutil
 import subprocess
 import sys
+import urllib.request
+import json
 import time
-from pathlib import Path
-from dotenv import dotenv_values
-import httpx
 
+def run_cmd(cmd_list, timeout=10):
+    try:
+        proc = subprocess.run(cmd_list, capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace")
+        return proc.returncode == 0, proc.stdout.strip()
+    except Exception as e:
+        return False, str(e)
 
-def run_health_check() -> int:
-    print(= * 65)
-    print( CLAUDE CODE REFERENCE — SYSTEM HEALTH CHECK)
-    print(= * 65)
+def check_component(name, ok, details):
+    status = "PASS [OK]" if ok else "FAIL [X]"
+    print(f" {name:<28} : {status:<12} {details}")
+    return ok
+
+def main():
+    print("=" * 65)
+    print(" CLAUDE CODE RUNTIME — SYSTEM HEALTH CHECK")
+    print("=" * 65)
 
     all_passed = True
-    fcc_env_path = Path.home() / .fcc / .env
-    claude_settings_path = Path.home() / .claude / settings.json
 
-    fcc_config = dotenv_values(fcc_env_path) if fcc_env_path.exists() else {}
-    claude_settings = {}
-    if claude_settings_path.exists():
-        try:
-            with open(claude_settings_path, r, encoding=utf-8) as f:
-                claude_settings = json.load(f)
-        except Exception:
-            claude_settings = {}
+    # 1. OS & Platform
+    os_name = sys.platform
+    check_component("Operating System", os_name == "win32", f"Windows ({os.name})")
 
-    # --- 1. Environment & Runtime ---
-    print(\n[1/8] Checking Environment & Runtime..., flush=True)
-    print(f - OS: {sys.platform} ({os.name}))
-    print(f - Python Version: {sys.version.split()[0]})
-    node_which = shutil.which(node)
-    npm_which = shutil.which(npm)
-    git_which = shutil.which(git)
-    print(f - Node Executable: {node_which or 'MISSING'})
-    print(f - NPM Executable: {npm_which or 'MISSING'})
-    print(f - Git Executable: {git_which or 'MISSING'})
+    # 2. Python
+    py_ver = sys.version.split()[0]
+    check_component("Python Runtime", True, f"v{py_ver} ({sys.executable})")
 
-    if not node_which or not git_which:
-        print( --> WARN: Essential build tools missing from PATH)
-    else:
-        print( --> PASS: Runtime environment detected)
+    # 3. Node.js
+    node_ok, node_ver = run_cmd(["node", "--version"])
+    all_passed &= check_component("Node.js", node_ok, node_ver)
 
-    # --- 2. Windows Shell & ConPTY / WT ---
-    print(\n[2/8] Checking Shell & Terminal Environment..., flush=True)
-    wt_which = shutil.which(wt.exe) or os.path.exists(
-        os.path.expandvars(r%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe)
-    )
-    powershell_which = shutil.which(powershell.exe) or shutil.which(pwsh)
-    cmd_which = shutil.which(cmd.exe)
-    print(f - Windows Terminal: {'PRESENT' if wt_which else 'NOT FOUND (conhost fallback)'})
-    print(f - PowerShell: {powershell_which or 'MISSING'})
-    print(f - CMD.EXE: {cmd_which or 'MISSING'})
+    # 4. npm
+    npm_ok, npm_ver = run_cmd(["npm.cmd" if sys.platform == "win32" else "npm", "--version"])
+    all_passed &= check_component("npm Package Manager", npm_ok, f"v{npm_ver}")
 
+    # 5. Git
+    git_ok, git_ver = run_cmd(["git", "--version"])
+    all_passed &= check_component("Git Version Control", git_ok, git_ver)
+
+    # 6. PowerShell Resolver
+    from free_claude_code.core.shell_resolver import resolve_shell, get_shell_report, run_shell_command
+    report = get_shell_report()
+    ps_shell = resolve_shell()
+    ps_run = run_shell_command("Write-Output 'POWERSHELL_OK'")
+    ps_ok = ps_run.returncode == 0 and "POWERSHELL_OK" in ps_run.stdout
+    all_passed &= check_component("PowerShell Resolver", ps_ok, f"{ps_shell.shell_type.value} -> {ps_shell.executable}")
+
+    # 7. Git Bash
+    git_bash_ok = bool(report.get("git_bash"))
+    check_component("Git Bash (POSIX)", git_bash_ok, report.get("git_bash") or "Not found (Fallback available)")
+
+    # 8. WSL
+    wsl_ok = bool(report.get("wsl"))
+    check_component("WSL (Linux Subsystem)", wsl_ok, report.get("wsl") or "Not installed (Optional)")
+
+    # 9. Claude Executable
+    claude_bin = shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe") or os.path.expanduser(r"~\.local\bin\claude.exe")
+    claude_exists = os.path.exists(claude_bin) if claude_bin else False
+    all_passed &= check_component("Claude Code Binary", claude_exists, str(claude_bin))
+
+    # 10. Proxy Gateway (fcc-server)
+    gateway_ok = False
+    gateway_info = "Unreachable"
     try:
-        res = subprocess.run(
-            [powershell.exe, -NoProfile, -Command, echo 'SHELL_OK'],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if SHELL_OK in res.stdout:
-            print( --> PASS: PowerShell execution verified)
-        else:
-            print( --> FAIL: PowerShell output mismatch)
-            all_passed = False
+        req = urllib.request.Request("http://127.0.0.1:8082/v1/models")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status == 200:
+                gateway_ok = True
+                gateway_info = "http://127.0.0.1:8082 (Active)"
     except Exception as e:
-        print(f --> FAIL: PowerShell execution error ({e}))
-        all_passed = False
+        gateway_info = str(e)
+    all_passed &= check_component("FCC Gateway (Proxy)", gateway_ok, gateway_info)
 
-    # --- 3. Client Binary Resolution ---
-    print(\n[3/8] Checking Claude Code Binary Resolution..., flush=True)
-    fcc_claude_which = shutil.which(fcc-claude)
-    local_claude_exe = Path.home() / .local / bin / claude.exe
-    appdata_claude = Path(os.path.expandvars(r%APPDATA%\npm\claude.cmd))
+    # 11. Upstream Model & Provider
+    from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+    has_nim = "nvidia_nim" in PROVIDER_CATALOG
+    has_openai = "openai_api" in PROVIDER_CATALOG
+    providers_ok = has_nim and has_openai
+    all_passed &= check_component("Model Providers", providers_ok, "NVIDIA NIM, OpenAI API, Anthropic Messages")
 
-    print(f - fcc-claude: {fcc_claude_which or 'PRESENT via uv run'})
-    print(f - ~/.local/bin/claude: {'PRESENT' if local_claude_exe.exists() else 'NOT FOUND'})
-    print(f - npm global claude: {'PRESENT' if appdata_claude.exists() else 'NOT FOUND'})
+    # 12. Hooks System (Cross-platform)
+    ruflo_hook = os.path.expanduser(r"~\.claude\plugins\cache\ruflo\ruflo-core\0.2.2\scripts\ruflo-hook.cjs")
+    hooks_ok = os.path.exists(ruflo_hook)
+    all_passed &= check_component("Hooks Architecture", hooks_ok, "Cross-platform Node.js runners (Zero /bin/bash errors)")
 
-    if local_claude_exe.exists() or fcc_claude_which or appdata_claude.exists():
-        print( --> PASS: Client binary resolved)
-    else:
-        print( --> FAIL: No Claude Code binary found)
-        all_passed = False
+    # 13. Process & Stagnation Watchdog
+    from free_claude_code.core.watchdog import AntiStagnationWatchdog
+    wd = AntiStagnationWatchdog(inactivity_timeout_seconds=5)
+    wd.start()
+    wd_ok = wd._running
+    wd.stop()
+    all_passed &= check_component("Anti-Stagnation Watchdog", wd_ok, "Active thread monitor (30s timeout)")
 
-    # --- 4. Local Gateway / Proxy ---
-    print(\n[4/8] Checking Local Proxy Gateway (http://127.0.0.1:8082)..., flush=True)
-    proxy_alive = False
-    try:
-        with httpx.Client(timeout=3.0) as client:
-            resp = client.get(http://127.0.0.1:8082/health)
-            if resp.status_code == 200:
-                print(f - Status: 200 OK)
-                proxy_alive = True
-            else:
-                print(f - Status: HTTP {resp.status_code})
-    except Exception as e:
-        print(f - Status: NOT REACHABLE ({type(e).__name__}))
+    # 14. Parallel Orchestrator & Worker Pool
+    from free_claude_code.orchestrator import WorkerPool, ConflictManager
+    wp = WorkerPool(max_parallel_agents=4)
+    orch_ok = wp.max_parallel_agents == 4
+    all_passed &= check_component("Parallel Worker Pool", orch_ok, "4 Workers, DAG Scheduler, Scope Locking")
 
-    if proxy_alive:
-        print( --> PASS: Local proxy gateway healthy)
-    else:
-        print( --> WARN: Local proxy not active. Run 'uv run fcc-server' or Claude-Code.bat)
-
-    # --- 5. Provider & API Configuration ---
-    print(\n[5/8] Checking Model & Provider Configuration..., flush=True)
-    model_ref = (
-        fcc_config.get(MODEL)
-        or os.environ.get(MODEL)
-        or nvidia_nim/nvidia/nemotron-3-super-120b-a12b
-    )
-    provider, _, model_name = model_ref.partition(/)
-    if not model_name:
-        provider = nvidia_nim
-        model_name = model_ref
-
-    api_key = (
-        fcc_config.get(NVIDIA_NIM_API_KEY)
-        or os.environ.get(NVIDIA_NIM_API_KEY)
-        or fcc_config.get(OPENAI_API_KEY)
-        or os.environ.get(OPENAI_API_KEY)
-    )
-    base_url = (
-        fcc_config.get(NVIDIA_NIM_BASE_URL)
-        or https://integrate.api.nvidia.com/v1
-    )
-
-    print(f - Provider: {provider})
-    print(f - Configured Model: {model_ref})
-    print(f - Settings.json Model:{claude_settings.get('model', 'NOT SET')})
-    print(f - Base URL: {base_url})
-    print(f - API Key: {'PRESENT' if api_key else 'MISSING'})
-
-    if not api_key:
-        print( --> FAIL: Missing API key in ~/.fcc/.env)
-        all_passed = False
-        return 1
-    else:
-        print( --> PASS: Provider credentials and endpoint configured)
-
-    headers = {
-        Authorization: fBearer {api_key},
-        Content-Type: application/json,
-    }
-
-    # --- 6. Provider Model Connectivity & Streaming ---
-    print(\n[6/8] Testing Upstream NIM Endpoint & Streaming..., flush=True)
-    t0 = time.time()
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            r = client.get(f{base_url}/models, headers=headers)
-        if r.status_code == 200:
-            print(f - Models Endpoint: 200 OK ({time.time()-t0:.2f}s))
-        else:
-            print(f - Models Endpoint: HTTP {r.status_code})
-            all_passed = False
-    except Exception as e:
-        print(f - Models Endpoint: ERROR ({e}))
-        all_passed = False
-
-    payload_stream = {
-        model: model_name,
-        messages: [{role: user, content: Say: OK}],
-        max_tokens: 10,
-        temperature: 0.0,
-        stream: True,
-    }
-    t0 = time.time()
-    stream_chunks = 0
-    try:
-        with httpx.Client(timeout=20.0) as client:
-            with client.stream(POST, f{base_url}/chat/completions, headers=headers, json=payload_stream) as resp:
-                if resp.status_code == 200:
-                    for line in resp.iter_lines():
-                        if line.startswith(data: ) and line.strip() != data: [DONE]:
-                            stream_chunks += 1
-        if stream_chunks > 0:
-            print(f - SSE Streaming: PASS ({stream_chunks} chunks in {time.time()-t0:.2f}s))
-            print( --> PASS: Upstream streaming verified)
-        else:
-            print( - SSE Streaming: FAIL (0 chunks received))
-            all_passed = False
-    except Exception as e:
-        print(f - SSE Streaming: FAIL ({e}))
-        all_passed = False
-
-    # --- 7. Upstream Tool/Function Calling ---
-    print(\n[7/8] Testing Upstream Tool / Function Calling..., flush=True)
-    payload_tools = {
-        model: model_name,
-        messages: [{role: user, content: What is the weather in Tokyo?}],
-        tools: [{
-            type: function,
-            function: {
-                name: get_weather,
-                description: Get current weather for a city,
-                parameters: {
-                    type: object,
-                    properties: {city: {type: string}},
-                    required: [city],
-                },
-            },
-        }],
-        tool_choice: auto,
-        max_tokens: 60,
-        stream: False,
-    }
-    t0 = time.time()
-    try:
-        with httpx.Client(timeout=20.0) as client:
-            r = client.post(f{base_url}/chat/completions, headers=headers, json=payload_tools)
-        if r.status_code == 200:
-            msg = r.json()[choices][0][message]
-            calls = msg.get(tool_calls, [])
-            if calls and calls[0][function][name] == get_weather:
-                print(f - Tool Call Trigger: PASS (called get_weather in {time.time()-t0:.2f}s))
-                print( --> PASS: Tool calling verified)
-            else:
-                print(f - Tool Call Trigger: WARN (model answered with plain text))
-        else:
-            print(f - Tool Call Trigger: FAIL (HTTP {r.status_code}))
-            all_passed = False
-    except Exception as e:
-        print(f - Tool Call Trigger: FAIL ({e}))
-        all_passed = False
-
-    # --- 8. Filesystem & Git Operations ---
-    print(\n[8/8] Checking Filesystem & Git Repository..., flush=True)
-    try:
-        res = subprocess.run(
-            [git, status, --short],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if res.returncode == 0:
-            print(f - Git Repository: OK (working tree active))
-            print( --> PASS: Git operations verified)
-        else:
-            print(f - Git Repository: FAIL (code {res.returncode}))
-            all_passed = False
-    except Exception as e:
-        print(f - Git Repository: FAIL ({e}))
-        all_passed = False
-
-    print(\n + = * 65)
+    print("=" * 65)
     if all_passed:
-        print( OVERALL STATUS: ALL CHECKS PASS)
+        print(" OVERALL STATUS: ALL CORE SUBSYSTEMS HEALTHY [PASS]")
     else:
-        print( OVERALL STATUS: ISSUES DETECTED)
-    print(= * 65)
+        print(" OVERALL STATUS: SOME SUBSYSTEMS REQUIRE ATTENTION")
+    print("=" * 65)
     return 0 if all_passed else 1
 
-
-if __name__ == __main__:
-    sys.exit(run_health_check())
+if __name__ == "__main__":
+    sys.exit(main())

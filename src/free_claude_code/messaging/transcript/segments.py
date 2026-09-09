@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Transcript segment types for messaging UI output."""
 
 import json

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Pure, validated application settings schema."""
 
 from typing import Annotated

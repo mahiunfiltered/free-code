@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Telegram inbound event normalization."""
 
 from loguru import logger

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Helpers for redacting user-derived content from log lines."""
 
 

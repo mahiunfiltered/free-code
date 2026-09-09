@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """OpenAI Chat Completions wire-history helpers."""
 
 import json

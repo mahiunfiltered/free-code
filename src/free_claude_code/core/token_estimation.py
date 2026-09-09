@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Process-wide best-effort plain-text token estimation."""
 
 from typing import Protocol

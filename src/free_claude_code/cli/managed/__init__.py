@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Managed Claude Code sessions used by messaging."""
 
 from .manager import ManagedClaudeSessionManager

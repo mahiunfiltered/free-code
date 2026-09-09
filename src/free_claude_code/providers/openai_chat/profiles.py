@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Declarative profiles for ordinary OpenAI-compatible providers."""
 
 from collections.abc import Mapping
@@ -682,5 +684,23 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ),
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
+    ),
+    "openai_api": OpenAIChatProfile(
+        _policy(
+            "OPENAI_API",
+            ReasoningReplayMode.REASONING,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            _LOW_MEDIUM_HIGH,
+            disabled_value="none",
+            enabled_value="medium",
+        ),
+        model_listing=OpenAIModelListing(
+            path="/models",
+            collection_field="data",
+            id_field="id",
+        ),
+        reasoning_delta_field="reasoning_content",
     ),
 }

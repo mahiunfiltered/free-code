@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """OpenRouter-format structured reasoning replay and stream conversion."""
 
 import json

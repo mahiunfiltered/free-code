@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Installed `fcc-opencode` launcher for stable OpenCode v1."""
 
 import json

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Sparse managed-config validation, preview, and atomic persistence."""
 
 from collections.abc import Mapping

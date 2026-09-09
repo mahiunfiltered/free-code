@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Command parsing and dispatch for messaging handlers."""
 
 from .command_context import MessagingCommandContext

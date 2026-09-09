@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Provider configuration construction from neutral catalog metadata."""
 
 from free_claude_code.application.errors import ApplicationUnavailableError

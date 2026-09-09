@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Convert Anthropic Messages into an upstream OpenAI Responses request."""
 
 import json

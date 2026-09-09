@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Canonical managed-config loading, precedence, provenance, and caching."""
 
 import os

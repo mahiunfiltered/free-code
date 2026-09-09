@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Catalog-derived Admin provider fields."""
 
 from dataclasses import replace

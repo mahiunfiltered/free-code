@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """One closable generation of lazily constructed provider clients."""
 
 import asyncio

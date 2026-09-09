@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Task/subagent display state for messaging transcripts."""
 
 from typing import Any

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """OpenCode provider with catalog-driven Chat/Responses dispatch."""
 
 import sys
