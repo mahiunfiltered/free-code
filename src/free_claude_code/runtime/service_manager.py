@@ -107,6 +107,10 @@ class BackgroundServiceManager:
         self._services[name] = status
         return status
 
+    def get_service_status(self, name: str) -> ServiceStatus | None:
+        """Returns the status of a registered service, or None if not registered."""
+        return self._services.get(name)
+
     def stop_service(self, name: str) -> None:
         """Stops a background service."""
         if status := self._services.pop(name, None):

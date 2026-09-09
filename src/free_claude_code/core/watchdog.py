@@ -106,6 +106,20 @@ class AntiStagnationWatchdog:
         with self._lock:
             return [a for a in self._activities.values() if a.is_active]
 
+    def diagnose_stagnation(self, act: ActivityRecord) -> str:
+        """Classifies the root cause of a stalled activity."""
+        if act.kind == ActivityKind.API_REQUEST:
+            return f"MODEL_LATENCY: Upstream API request inactive for {act.idle_seconds:.1f}s ({act.description})"
+        elif act.kind == ActivityKind.SHELL_COMMAND:
+            return f"SUBPROCESS_HANG: Shell command unresponsive for {act.idle_seconds:.1f}s ({act.description})"
+        elif act.kind == ActivityKind.WORKER_TASK:
+            if "waiting_for_scope" in act.metadata:
+                return f"FILE_LOCK: Task waiting on file/directory scope lock ({act.metadata.get('waiting_for_scope')})"
+            if "waiting_for_deps" in act.metadata:
+                return f"DEPENDENCY_WAIT: Task blocked on upstream tasks ({act.metadata.get('waiting_for_deps')})"
+            return f"WORKER_STALL: Worker execution inactive for {act.idle_seconds:.1f}s ({act.description})"
+        return f"UNKNOWN_STAGNATION: Inactivity of {act.idle_seconds:.1f}s ({act.description})"
+
     def _monitor_loop(self) -> None:
         while self._running:
             time.sleep(2.0)
@@ -117,6 +131,7 @@ class AntiStagnationWatchdog:
                         stalled.append(act)
 
             for act in stalled:
+                diag = self.diagnose_stagnation(act)
                 if self.on_stagnation:
                     try:
                         self.on_stagnation(act)

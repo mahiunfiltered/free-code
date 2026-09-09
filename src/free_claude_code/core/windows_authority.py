@@ -138,6 +138,39 @@ class WindowsAuthorityManager:
         print("=" * 65 + "\n")
 
 
+    def check_permission(self, operation: str) -> tuple[bool, str]:
+        """Checks if the operation is permitted under current Windows execution authority."""
+        op_lower = operation.lower()
+        admin_required_ops = (
+            "sc create", "sc config", "sc delete", "netsh advfirewall", "diskpart",
+            "format ", "set-executionpolicy unrestricted", "takeown", "icacls /grant:r administrators",
+            "install-windowsfeature", "dism /online"
+        )
+        is_admin_req = any(kw in op_lower for kw in admin_required_ops)
+        
+        if is_admin_req and not self._is_admin():
+            return False, f"Administrator privileges required for: '{operation}'. Launch with elevation: Start-Process powershell -Verb RunAs"
+        
+        return True, "Permitted under current Windows authority"
+
+    def request_elevated_helper(self, command: str, wait: bool = True) -> subprocess.CompletedProcess[str]:
+        """Launches a Windows UAC elevated helper process via Start-Process powershell -Verb RunAs."""
+        if sys.platform != "win32":
+            return subprocess.run(["sudo", "sh", "-c", command], capture_output=True, text=True)
+        
+        escaped_cmd = command.replace('"', '`"')
+        ps_cmd = f"Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile', '-Command', '{escaped_cmd}'"
+        if wait:
+            ps_cmd += " -Wait"
+        
+        return subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+
 _GLOBAL_WINDOWS_AUTHORITY = WindowsAuthorityManager()
 
 

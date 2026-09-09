@@ -141,6 +141,40 @@ class AutonomousDebugger:
                 can_auto_apply=True,
             )
 
+        if fc == FailureClass.NODE_EXCEPTION:
+            if "Cannot find module" in diag.error_message or "ERR_MODULE_NOT_FOUND" in diag.error_message:
+                return RepairPlan(
+                    diagnosis="Missing Node.js package or unresolved module import.",
+                    proposed_action="Run npm/pnpm install or verify relative import path and tsconfig.json.",
+                    repair_command="npm install",
+                    can_auto_apply=True,
+                )
+            if "SyntaxError" in diag.error_message or "Unexpected token" in diag.error_message:
+                return RepairPlan(
+                    diagnosis="JavaScript/TypeScript syntax error or JSX transpilation issue.",
+                    proposed_action="Check JSX tags, missing closing brackets, or tsconfig jsx setting.",
+                    can_auto_apply=True,
+                )
+            return RepairPlan(
+                diagnosis="Node.js runtime exception.",
+                proposed_action="Inspect stack trace and verify module exports and type signatures.",
+                can_auto_apply=True,
+            )
+
+        if fc == FailureClass.TEST_FAILURE:
+            return RepairPlan(
+                diagnosis="Automated test assertion failure or fixture error.",
+                proposed_action="Inspect assertion diff, update test mock expectations, or fix component return value.",
+                can_auto_apply=True,
+            )
+
+        if fc == FailureClass.CONFIG_ERROR or fc == FailureClass.TOOL_SCHEMA_FAILURE:
+            return RepairPlan(
+                diagnosis="Configuration or tool parameter schema validation failure.",
+                proposed_action="Validate schema types, required keys, and configuration environment variables.",
+                can_auto_apply=True,
+            )
+
         if fc == FailureClass.PYTHON_EXCEPTION:
             if "NameError" in diag.error_message:
                 return RepairPlan(
@@ -152,6 +186,13 @@ class AutonomousDebugger:
                 return RepairPlan(
                     diagnosis="Missing Python module or package dependency.",
                     proposed_action="Install package or update PYTHONPATH.",
+                    repair_command="uv pip install",
+                    can_auto_apply=True,
+                )
+            if "SyntaxError" in diag.error_message:
+                return RepairPlan(
+                    diagnosis="Python syntax error or indentation error.",
+                    proposed_action="Fix syntax, colons, or indentation levels.",
                     can_auto_apply=True,
                 )
 

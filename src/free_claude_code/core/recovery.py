@@ -38,6 +38,70 @@ class FailureReport:
     timestamp: float = field(default_factory=time.time)
 
 
+class CircuitBreakerState(StrEnum):
+    CLOSED = "CLOSED"        # Normal operation
+    OPEN = "OPEN"            # Provider tripped, blocking requests
+    HALF_OPEN = "HALF_OPEN"  # Testing single probe request
+
+
+class CircuitBreaker:
+    """Circuit breaker for repeatedly failing model providers."""
+
+    def __init__(self, failure_threshold: int = 5, recovery_timeout_seconds: float = 30.0) -> None:
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout_seconds = recovery_timeout_seconds
+        self.failure_count: int = 0
+        self.last_failure_time: float = 0.0
+        self.state: CircuitBreakerState = CircuitBreakerState.CLOSED
+
+    def record_success(self) -> None:
+        self.failure_count = 0
+        self.state = CircuitBreakerState.CLOSED
+
+    def record_failure(self) -> None:
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        if self.failure_count >= self.failure_threshold:
+            self.state = CircuitBreakerState.OPEN
+
+    def allow_request(self) -> bool:
+        if self.state == CircuitBreakerState.CLOSED:
+            return True
+        if self.state == CircuitBreakerState.OPEN:
+            if time.time() - self.last_failure_time >= self.recovery_timeout_seconds:
+                self.state = CircuitBreakerState.HALF_OPEN
+                return True
+            return False
+        if self.state == CircuitBreakerState.HALF_OPEN:
+            return True
+        return True
+
+
+class ApiProgressReporter:
+    """Logs clean observable progress milestones for API and streaming interactions."""
+
+    @staticmethod
+    def on_connecting(endpoint: str) -> None:
+        print(f"[API] Connecting to {endpoint}...")
+
+    @staticmethod
+    def on_connected(model: str) -> None:
+        print(f"[API] Connected | Model: {model}")
+
+    @staticmethod
+    def on_ttft(ttft_seconds: float) -> None:
+        print(f"[API] TTFT: {ttft_seconds:.3f}s")
+
+    @staticmethod
+    def on_streaming(chunk_count: int) -> None:
+        if chunk_count % 20 == 0:
+            print(f"[API] Streaming... ({chunk_count} chunks received)")
+
+    @staticmethod
+    def on_completed(duration_seconds: float, token_estimate: int = 0) -> None:
+        print(f"[API] Completed in {duration_seconds:.2f}s (~{token_estimate} tokens)")
+
+
 def classify_error(exc: Exception | str) -> ErrorSeverity:
     """Classifies an error as transient, permanent, or recoverable."""
     msg = str(exc).lower()
@@ -64,23 +128,37 @@ class BoundedRecoveryEngine:
         self.max_attempts = max_attempts
         self.base_backoff_seconds = base_backoff_seconds
         self.reports: list[FailureReport] = []
+        self.circuit_breakers: dict[str, CircuitBreaker] = {}
+
+    def get_circuit_breaker(self, provider_id: str = "default") -> CircuitBreaker:
+        if provider_id not in self.circuit_breakers:
+            self.circuit_breakers[provider_id] = CircuitBreaker()
+        return self.circuit_breakers[provider_id]
 
     async def execute_with_recovery(
         self,
         task_id: str,
         coro_fn: Callable[[], Coroutine[Any, Any, T]],
         diagnose_and_repair_fn: Callable[[Exception, int], Coroutine[Any, Any, bool]] | None = None,
+        provider_id: str = "default",
     ) -> T:
-        """Executes a coroutine with up to max_attempts retries and automated diagnosis."""
+        """Executes a coroutine with up to max_attempts retries, circuit breaking, and automated diagnosis."""
+        breaker = self.get_circuit_breaker(provider_id)
+        if not breaker.allow_request():
+            raise RuntimeError(f"Circuit breaker OPEN for provider '{provider_id}'. Failing fast.")
+
         attempt = 0
         attempted_fixes: list[str] = []
 
         while True:
             attempt += 1
             try:
-                return await coro_fn()
+                result = await coro_fn()
+                breaker.record_success()
+                return result
             except Exception as exc:
                 severity = classify_error(exc)
+                breaker.record_failure()
 
                 if severity == ErrorSeverity.PERMANENT:
                     report = FailureReport(

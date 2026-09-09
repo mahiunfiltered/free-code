@@ -204,6 +204,18 @@ async def main():
 
     profiler = get_runtime_profiler()
     baseline = profiler.export_baseline("performance_baseline.json")
+    
+    report_data = {
+        "sequential_duration_seconds": seq_time,
+        "parallel_duration_seconds": par_time,
+        "speedup_factor": speedup,
+        "wall_clock_reduction_percent": improvement_pct,
+        "concurrency_used": optimal_concurrency,
+        "artifacts_verified": all_files_exist,
+        "profiler_summary": baseline
+    }
+    with open("performance_report.json", "w", encoding="utf-8") as rf:
+        json.dump(report_data, rf, indent=2)
 
     print("\n" + "=" * 65)
     print(" BENCHMARK & PROFILING SUMMARY")
@@ -215,6 +227,7 @@ async def main():
     print(f" Total Tokens (Est) : {baseline['total_tokens_estimated']} tokens")
     print(f" Artifacts Verified : {'PASS [OK]' if all_files_exist else 'FAIL [X]'}")
     print(f" Baseline Exported  : performance_baseline.json")
+    print(f" Report Exported    : performance_report.json")
     print("=" * 65)
 
     return 0 if (speedup >= 1.5 and all_files_exist) else 1

@@ -17,6 +17,7 @@ from free_claude_code.orchestrator.models import (
     DependencyKind,
     ModelRole,
     Task,
+    TaskComplexity,
     TaskState,
 )
 from free_claude_code.orchestrator.scheduler import TaskScheduler
@@ -67,6 +68,18 @@ class AutonomousMasterAgent:
                 model_name=self.model_name,
             )
 
+    def classify_complexity(self, goal: str, tasks: list[Task]) -> TaskComplexity:
+        """Classifies goal complexity into TRIVIAL, SMALL, MEDIUM, LARGE, or ENTERPRISE."""
+        if len(tasks) <= 1 and len(goal.split()) < 10:
+            return TaskComplexity.TRIVIAL
+        if len(tasks) <= 2:
+            return TaskComplexity.SMALL
+        if len(tasks) <= 6:
+            return TaskComplexity.MEDIUM
+        if len(tasks) <= 15:
+            return TaskComplexity.LARGE
+        return TaskComplexity.ENTERPRISE
+
     async def run_plan(
         self,
         goal: str,
@@ -78,8 +91,27 @@ class AutonomousMasterAgent:
         start_time = time.time()
         self.watchdog.start()
 
+        complexity = self.classify_complexity(goal, tasks)
+
         try:
             self._render_progress("PLANNING", tasks)
+
+            # Fast path for TRIVIAL tasks: execute directly without scheduler overhead
+            if complexity == TaskComplexity.TRIVIAL and len(tasks) == 1:
+                t = tasks[0]
+                t.complexity = TaskComplexity.TRIVIAL
+                self._render_progress("FAST_PATH_RUNNING", tasks)
+                res_task = await self.worker_pool.execute_task(t, task_executor_fn, timeout_seconds=total_timeout_seconds)
+                dur = time.time() - start_time
+                self._render_progress("COMPLETED" if res_task.status == TaskState.COMPLETED else "FAILED", tasks)
+                return WorkflowResult(
+                    goal=goal,
+                    success=(res_task.status == TaskState.COMPLETED),
+                    duration_seconds=dur,
+                    tasks=tasks,
+                    summary=f"Fast-path completed 1 trivial task in {dur:.2f}s",
+                    reviewer_verdict="FAST_PATH_VERIFIED",
+                )
 
             # 1. Execute parallel task plan via scheduler
             def _on_update(t: Task):
