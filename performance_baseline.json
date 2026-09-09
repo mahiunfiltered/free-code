@@ -1,0 +1,12 @@
+{
+  "project_name": "Claude Code Runtime",
+  "timestamp": 1788961236.7312691,
+  "total_duration_seconds": 4.233671426773071,
+  "total_model_requests": 13,
+  "avg_model_latency_seconds": 0.25,
+  "total_tool_calls": 13,
+  "avg_tool_latency_seconds": 0.3699319912837102,
+  "total_tokens_estimated": 30611,
+  "recovery_attempts": 0,
+  "metrics_count": 26
+}
