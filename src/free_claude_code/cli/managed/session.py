@@ -132,6 +132,11 @@ class ManagedClaudeSession:
 
                     process = await asyncio.create_subprocess_exec(
                         *invocation.argv,
+                        stdin=(
+                            asyncio.subprocess.PIPE
+                            if invocation.prompt_input is not None
+                            else None
+                        ),
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         cwd=invocation.cwd,
@@ -140,6 +145,19 @@ class ManagedClaudeSession:
                     self.process = process
                     if process.pid:
                         register_pid(process.pid)
+
+                    if process.stdin and invocation.prompt_input is not None:
+                        try:
+                            process.stdin.write(invocation.prompt_input.encode("utf-8"))
+                            await process.stdin.drain()
+                        except (BrokenPipeError, ConnectionResetError, OSError):
+                            pass
+                        finally:
+                            try:
+                                process.stdin.close()
+                                await process.stdin.wait_closed()
+                            except (BrokenPipeError, ConnectionResetError, OSError):
+                                pass
 
                 if not process.stdout:
                     yield {"type": "exit", "code": 1}

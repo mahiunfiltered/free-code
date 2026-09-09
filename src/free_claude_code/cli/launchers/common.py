@@ -73,11 +73,46 @@ def run_client_process(
     binary_name: str,
     display_name: str,
     install_hint: str,
+    legacy_console_paste: bool = False,
 ) -> None:
     """Run a client CLI command and mirror its exit code."""
 
+    import signal
+
     process: subprocess.Popen[bytes] | None = None
+    old_sigint = None
+    paste_bridge = None
     try:
+        if sys.platform == "win32":
+            # On Windows, configure console modes for UTF-8 and VT I/O
+            try:
+                from free_claude_code.cli.interactive_input import (
+                    configure_windows_console_modes,
+                )
+
+                configure_windows_console_modes()
+            except Exception:
+                pass
+
+            # Only run the legacy paste bridge if explicitly requested (e.g. legacy fallback)
+            if legacy_console_paste:
+                try:
+                    from free_claude_code.cli.interactive_input import (
+                        WindowsConsolePasteBridge,
+                    )
+
+                    paste_bridge = WindowsConsolePasteBridge()
+                    paste_bridge.start()
+                except Exception:
+                    paste_bridge = None
+
+            # On Windows, ignore SIGINT in the parent wrapper while the interactive client process runs,
+            # allowing the client (e.g. Claude Code, Codex) to handle Ctrl+C (cancel generation vs copy) directly.
+            try:
+                old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            except (ValueError, OSError):
+                old_sigint = None
+
         process = subprocess.Popen(command, env=dict(env))
         if process.pid:
             register_pid(process.pid)
@@ -92,9 +127,18 @@ def run_client_process(
     except KeyboardInterrupt:
         if process is not None and process.pid:
             kill_pid_tree_best_effort(process.pid)
-            process.wait()
         raise
     finally:
+        if paste_bridge is not None:
+            try:
+                paste_bridge.stop()
+            except Exception:
+                pass
+        if old_sigint is not None:
+            try:
+                signal.signal(signal.SIGINT, old_sigint)
+            except (ValueError, OSError):
+                pass
         if process is not None and process.pid:
             unregister_pid(process.pid)
 

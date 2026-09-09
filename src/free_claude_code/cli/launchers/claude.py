@@ -18,10 +18,55 @@ _INSTALL_HINT = "Install Claude Code with: npm install -g @anthropic-ai/claude-c
 _DEFAULT_PERMISSION_MODE_ARGS = ("--permission-mode", "default")
 _PERMISSION_MODE_FLAG = "--permission-mode"
 _BYPASS_PERMISSIONS_FLAG = "--dangerously-skip-permissions"
+_LEGACY_CONSOLE_PASTE_FLAG = "--legacy-console-paste"
+_DIAGNOSE_INPUT_FLAG = "--diagnose-input"
+_PASTE_FLAG = "--paste"
+_INTERACTIVE_PROMPT_FLAGS = ("--prompt", "-i", "--interactive-prompt")
 
 
 def launch(argv: Sequence[str] | None = None) -> None:
     """Launch Claude Code with Free Claude Code proxy environment variables."""
+
+    args = list(sys.argv[1:] if argv is None else argv)
+
+    legacy_console_paste = False
+    if _LEGACY_CONSOLE_PASTE_FLAG in args:
+        args.remove(_LEGACY_CONSOLE_PASTE_FLAG)
+        legacy_console_paste = True
+
+    if _DIAGNOSE_INPUT_FLAG in args:
+        from free_claude_code.cli.interactive_input import (
+            diagnose_terminal_input,
+            print_diagnostics,
+        )
+
+        diag = diagnose_terminal_input()
+        print_diagnostics(diag)
+        return
+
+    if _PASTE_FLAG in args:
+        args.remove(_PASTE_FLAG)
+        from free_claude_code.cli.interactive_input import get_clipboard_text
+
+        clip_text = get_clipboard_text()
+        if not clip_text:
+            print("No text found in clipboard.", file=sys.stderr)
+            raise SystemExit(1)
+        args.extend(["-p", clip_text])
+
+    for flag in _INTERACTIVE_PROMPT_FLAGS:
+        if flag in args:
+            args.remove(flag)
+            from free_claude_code.cli.interactive_input import (
+                InteractivePromptReader,
+            )
+
+            reader = InteractivePromptReader()
+            prompt = reader.read_prompt()
+            if prompt is None or not prompt.strip():
+                return
+            args.extend(["-p", prompt])
+            break
 
     settings = get_settings()
     proxy_root_url = local_proxy_root_url(settings)
@@ -39,7 +84,6 @@ def launch(argv: Sequence[str] | None = None) -> None:
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
     )
-    args = list(sys.argv[1:] if argv is None else argv)
     run_client_process(
         command=build_claude_launcher_command(binary_path=binary_path, argv=args),
         env=build_claude_proxy_env(
@@ -50,6 +94,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         binary_name=binary_name,
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
+        legacy_console_paste=legacy_console_paste,
     )
 
 

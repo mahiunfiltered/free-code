@@ -187,10 +187,11 @@ from more than one provider before succeeding.
 | Provider | Admin UI setting | Example `MODEL` |
 | --- | --- | --- |
 | [NVIDIA NIM](https://build.nvidia.com/settings/api-keys) | `NVIDIA_NIM_API_KEY` | `nvidia_nim/nvidia/nemotron-3-super-120b-a12b` |
+| [OpenAI (Official API)](https://platform.openai.com/api-keys) | `OPENAI_API_KEY` | `openai/gpt-4o` |
+| [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | Connect ChatGPT in the Admin UI | `openai_codex/<model-id>` |
 | [OpenRouter](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` | `open_router/openrouter/free` |
 | [Groq](https://console.groq.com/keys) | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` |
 | [ClinePass](https://docs.cline.bot/getting-started/clinepass) | `CLINE_API_KEY` | `cline_pass/cline-pass/kimi-k3` |
-| [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | Connect ChatGPT in the Admin UI | `openai/<model-id>` |
 | [xAI (Grok)](https://console.x.ai/team/default/api-keys) | `XAI_API_KEY` | `xai/grok-4.5` |
 | [QwenCloud Token Plan](https://home.qwencloud.com/api-keys) | `QWENCLOUD_API_KEY` | `qwencloud/qwen3.7-plus` |
 | [QwenCloud Coding Plan](https://home.qwencloud.com/api-keys) | `QWENCLOUD_CODING_API_KEY` | `qwencloud_coding/qwen3.7-plus` |
@@ -242,9 +243,8 @@ from more than one provider before succeeding.
 <details>
 <summary><strong>Provider-specific setup</strong></summary>
 
-- OpenAI uses your ChatGPT subscription rather than an API key. Connect from
-  **Providers → Connected accounts** in the Admin UI. Use device code on
-  headless systems. Restart an already-running agent after connecting.
+- OpenAI (Official API) uses standard `OPENAI_API_KEY` (and optional `OPENAI_BASE_URL`). Configure it in the Admin UI under Settings or `.env` and route to `openai/<model-id>` (e.g. `openai/gpt-4o`, `openai/o3-mini`).
+- OpenAI / ChatGPT connected account uses your ChatGPT Plus/Pro web subscription. Connect from **Providers → Connected accounts** in the Admin UI (or use device code on headless systems) and route to `openai_codex/<model-id>`. Restart an already-running agent after connecting.
 - Azure OpenAI uses the deployment names from your resource. Set
   `AZURE_OPENAI_BASE_URL` to its complete v1 endpoint, such as
   `https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/`, and select a

@@ -976,6 +976,12 @@ pay-as-you-go balance. They share the upstream `ZAI_API_KEY` and one declarative
 wire policy, while retaining separate proxies, provider instances, admission
 state, learned output caps, model caches, status rows, and model prefixes. FCC
 never probes or falls back between the two billing endpoints.
+OpenAI (Official API, `openai`) uses standard `OPENAI_API_KEY` (and optional
+`OPENAI_BASE_URL` targeting `https://api.openai.com/v1`) via the declarative
+`OpenAIChatProfile` with native `reasoning_content` replay, `max_completion_tokens`,
+and named `reasoning_effort` mapping. In contrast, OpenAI Codex (`openai_codex`)
+is a connected-account provider using ChatGPT web session tokens and OAuth
+authentication against the ChatGPT backend API.
 Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
 request/stream mapping inside
 [providers/mistral/reasoning.py](src/free_claude_code/providers/mistral/reasoning.py), including its

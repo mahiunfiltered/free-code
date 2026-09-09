@@ -200,6 +200,4 @@ def _is_degraded_function(body: Mapping[str, Any]) -> bool:
 
 def _is_reasoning_budget_rejection(error_text: str) -> bool:
     """Return whether NIM rejected optional thinking budget control."""
-    if "reasoning_budget" in error_text:
-        return True
-    return "thinking_token_budget" in error_text and "reasoning_config" in error_text
+    return "reasoning_budget" in error_text or "thinking_token_budget" in error_text

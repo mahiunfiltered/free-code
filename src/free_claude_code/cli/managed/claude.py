@@ -31,6 +31,7 @@ class ManagedClaudeInvocation:
     argv: tuple[str, ...]
     env: dict[str, str]
     cwd: str
+    prompt_input: str | None = None
     trace_metadata: JsonObject = field(default_factory=dict)
 
 
@@ -53,6 +54,10 @@ class ManagedClaudeParseState:
     session_id_extracted: bool = False
 
 
+# Maximum safe character length for a command-line argument on Windows (CreateProcess 32K limit)
+MAX_CLI_ARG_PROMPT_LEN = 8192
+
+
 def build_managed_claude_invocation(
     *,
     config: ManagedClaudeConfig,
@@ -73,6 +78,9 @@ def build_managed_claude_invocation(
         if request.session_id and not request.session_id.startswith("pending_")
         else None
     )
+    prompt_input = (
+        request.prompt if len(request.prompt) > MAX_CLI_ARG_PROMPT_LEN else None
+    )
     return ManagedClaudeInvocation(
         argv=tuple(cmd),
         env=build_managed_claude_env(
@@ -81,6 +89,7 @@ def build_managed_claude_invocation(
             base_env=base_env,
         ),
         cwd=config.workspace_path,
+        prompt_input=prompt_input,
         trace_metadata={
             "client_cli_id": "claude",
             "resume_session_id": resume_session_id,
@@ -123,6 +132,9 @@ def build_managed_claude_command(
 ) -> list[str]:
     """Return the Claude Code stream-json command for a managed task."""
 
+    # When prompt exceeds safe CLI arg length, pass -p without inline string to avoid WinError 206
+    include_inline_prompt = len(prompt) <= MAX_CLI_ARG_PROMPT_LEN
+
     if session_id and not session_id.startswith("pending_"):
         cmd = [
             claude_bin,
@@ -135,7 +147,10 @@ def build_managed_claude_command(
             "--model",
             MANAGED_CLAUDE_MODEL_TIER,
             "-p",
-            prompt,
+        ]
+        if include_inline_prompt:
+            cmd.append(prompt)
+        cmd += [
             "--output-format",
             "stream-json",
             "--dangerously-skip-permissions",
@@ -147,7 +162,10 @@ def build_managed_claude_command(
             "--model",
             MANAGED_CLAUDE_MODEL_TIER,
             "-p",
-            prompt,
+        ]
+        if include_inline_prompt:
+            cmd.append(prompt)
+        cmd += [
             "--output-format",
             "stream-json",
             "--dangerously-skip-permissions",

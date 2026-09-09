@@ -39,10 +39,10 @@ def build_asgi_app(
         verbose_third_party=settings.log_raw_api_payloads,
     )
     openai_auth = OpenAIAuthManager(proxy=settings.openai_proxy)
-    openai_factory = partial(_create_openai_provider, auth=openai_auth)
+    openai_codex_factory = partial(_create_openai_codex_provider, auth=openai_auth)
     provider_constructor = partial(
         create_provider,
-        injected_factories={"openai": openai_factory},
+        injected_factories={"openai": openai_codex_factory},
     )
     runtime_factory = partial(
         ProviderRuntime,
@@ -68,7 +68,7 @@ def build_asgi_app(
     return RuntimeASGIApp(create_app(services), runtime)
 
 
-def _create_openai_provider(
+def _create_openai_codex_provider(
     config: ProviderConfig,
     _settings: Settings,
     admission: ProviderAdmissionController,

@@ -17,6 +17,7 @@ from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
     NARAROUTE_DEFAULT_BASE,
+    OPENAI_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
     TOKENROUTER_DEFAULT_BASE,
 )
@@ -78,6 +79,14 @@ class Settings(BaseModel):
         validate_default=True,
         populate_by_name=True,
         extra="ignore",
+    )
+
+    # ==================== Official OpenAI API ====================
+    openai_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENAI_API_KEY"
+    )
+    openai_base_url: NonEmptyString = Field(
+        default=OPENAI_DEFAULT_BASE, validation_alias="OPENAI_BASE_URL"
     )
 
     # ==================== Azure OpenAI ====================
@@ -383,6 +392,9 @@ class Settings(BaseModel):
     # ==================== Per-Provider Proxy ====================
     openai_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="OPENAI_PROXY"
+    )
+    openai_codex_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENAI_CODEX_PROXY"
     )
     xai_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="XAI_PROXY"

@@ -112,8 +112,10 @@ def apply_nim_request_options(
             enabled = reasoning.control is not ReasoningControl.OFF
             chat_template_kwargs["thinking"] = enabled
             chat_template_kwargs["enable_thinking"] = enabled
-            if enabled and (budget := reasoning.numeric_budget_tokens) is not None:
-                chat_template_kwargs["reasoning_budget"] = budget
+            if enabled and reasoning.numeric_budget_tokens is not None:
+                chat_template_kwargs["reasoning_budget"] = (
+                    reasoning.numeric_budget_tokens
+                )
 
     _set_extra(extra_body, "top_k", nim.top_k, ignore_value=-1)
     _set_extra(extra_body, "min_p", nim.min_p, ignore_value=0.0)

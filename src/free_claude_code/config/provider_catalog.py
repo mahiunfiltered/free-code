@@ -52,6 +52,7 @@ CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
 SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
 # Kilo.ai gateway OpenAI-compatible Chat Completions API.
 KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
+OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
 OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
 # xAI OpenAI-compatible Chat Completions API.
 XAI_DEFAULT_BASE = "https://api.x.ai/v1"
@@ -163,7 +164,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "openai": ProviderDescriptor(
         provider_id="openai",
-        display_name="OpenAI / ChatGPT",
+        display_name="OpenAI",
         auth_kind=ProviderAuthKind.CONNECTED_ACCOUNT,
         default_base_url=OPENAI_CODEX_DEFAULT_BASE,
         proxy_attr="openai_proxy",
