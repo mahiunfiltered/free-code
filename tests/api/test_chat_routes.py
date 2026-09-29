@@ -3,13 +3,22 @@
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from free_claude_code.api.chat_routes import summarize_endpoints
+from free_claude_code.cli.managed import interactive
 from free_claude_code.config.settings import Settings
-from tests.api.support import create_test_app, provider_manager_for_app
+from free_claude_code.core.json_types import JsonObject
+from tests.api.support import (
+    create_test_app,
+    provider_manager_for_app,
+    runtime_for_app,
+)
+from tests.workbench.test_coordinator import FIX, fake_claude, make_repo, pytest_profile
 
 LOCAL = "http://127.0.0.1:8082"
 
@@ -264,3 +273,143 @@ def test_control_rejects_unknown_permission_mode():
         json={"request": {"subtype": "set_permission_mode", "mode": "yolo"}},
     )
     assert response.status_code == 400
+
+
+# ----- verified tasks, policy presets, endpoint summary ----------------------
+
+
+def test_policy_presets_route_lists_presets(client: TestClient):
+    body = client.get("/chat/api/policy/presets").json()
+    ids = [p["id"] for p in body["presets"]]
+    assert ids == ["restricted", "workspace", "privileged"]
+    assert body["presets"][1]["permission_mode"] == "acceptEdits"
+
+
+def test_endpoint_summary_counts_keys_per_provider(client: TestClient):
+    assert client.get("/chat/api/endpoints/summary").json() == {"providers": []}
+    health: JsonObject = {
+        "endpoints": [
+            {"provider_id": "nim", "circuit": "HEALTHY", "available": True},
+            {"provider_id": "nim", "circuit": "OPEN", "available": False},
+            {
+                "provider_id": "nim",
+                "circuit": "HEALTHY",
+                "available": True,
+                "cooldown_remaining_s": 12.0,
+            },
+            {"provider_id": "groq", "circuit": "HALF_OPEN", "available": True},
+        ]
+    }
+    assert summarize_endpoints(health) == [
+        {"provider_id": "nim", "healthy": 1, "total": 3, "cooling": 1, "open": 1},
+        {"provider_id": "groq", "healthy": 1, "total": 1, "cooling": 0, "open": 0},
+    ]
+    assert summarize_endpoints({}) == []
+
+
+def test_task_routes_404_for_unknown_tasks(client: TestClient):
+    assert client.get("/chat/api/tasks/nope").status_code == 404
+    assert client.get("/chat/api/tasks/nope/evidence").status_code == 404
+    assert client.post("/chat/api/tasks/nope/revert").status_code == 404
+    assert client.post("/chat/api/tasks/nope/cancel").status_code == 404
+    clarify = client.post("/chat/api/tasks/nope/clarify", json={"answers": "x"})
+    assert clarify.status_code == 404
+    assert (
+        client.post("/chat/api/tasks/nope/clarify", json={"answers": ""}).status_code
+        == 422
+    )
+    assert client.get("/chat/api/sessions/nope/tasks").json() == {"tasks": []}
+    bad_mode = client.post(
+        "/chat/api/live/nope/messages", json={"content": "x", "mode": "yolo"}
+    )
+    assert bad_mode.status_code == 422
+    unknown_live = client.post(
+        "/chat/api/live/nope/messages", json={"content": "x", "mode": "verified"}
+    )
+    assert unknown_live.status_code == 404
+
+
+def test_start_rejects_bad_preset_and_budget(client: TestClient, tmp_path: Path):
+    preset = client.post(
+        "/chat/api/live", json={"cwd": str(tmp_path), "policy_preset": "yolo"}
+    )
+    assert preset.status_code == 422
+    budget = client.post(
+        "/chat/api/live", json={"cwd": str(tmp_path), "budget": {"max_turns": 0}}
+    )
+    assert budget.status_code == 422
+
+
+def test_verified_task_over_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    fake = fake_claude(tmp_path)
+    monkeypatch.setattr(interactive.shutil, "which", lambda _name: fake)
+    repo = make_repo(tmp_path)
+    # Port 1: helper-model calls fail fast and degrade (never hit a real server).
+    app = create_test_app(Settings(port=1))
+    runtime_for_app(app).workbench.coordinator.options.profile = pytest_profile(repo)
+
+    with TestClient(app, client=("127.0.0.1", 50000), base_url=LOCAL) as client:
+        started = client.post(
+            "/chat/api/live",
+            json={
+                "cwd": str(repo),
+                "policy_preset": "workspace",
+                "budget": {"max_turns": 40, "max_output_tokens": 100000},
+            },
+        ).json()
+        assert started["policy_preset"] == "workspace"
+        assert started["permission_mode"] == "acceptEdits"
+        assert started["budget"]["max_turns"] == 40
+        assert started["usage"]["turns"] == 0
+        live_id = started["live_id"]
+
+        sent = client.post(
+            f"/chat/api/live/{live_id}/messages",
+            json={
+                "content": f"Fix add in calc.py so the tests pass\n{FIX}",
+                "mode": "verified",
+            },
+        ).json()
+        task_id = sent["task_id"]
+        assert sent["ok"] is True and task_id
+
+        deadline = time.monotonic() + 60
+        detail = client.get(f"/chat/api/tasks/{task_id}").json()
+        while detail["task"]["status"] not in (
+            "VERIFIED",
+            "FAILED",
+            "RECOVERY_REQUIRED",
+        ):
+            assert time.monotonic() < deadline, detail["task"]
+            time.sleep(0.1)
+            detail = client.get(f"/chat/api/tasks/{task_id}").json()
+        assert detail["task"]["status"] == "VERIFIED"
+        assert detail["task"]["mode"] == "verified"
+        assert detail["evidence"][0]["disposition"] == "VERIFIED"
+        assert any(e["type"] == "task.status" for e in detail["events"])
+
+        markdown = client.get(f"/chat/api/tasks/{task_id}/evidence")
+        assert markdown.headers["content-type"].startswith("text/markdown")
+        assert "Evidence package: VERIFIED" in markdown.text
+        as_json = client.get(
+            f"/chat/api/tasks/{task_id}/evidence", params={"format": "json"}
+        ).json()
+        assert as_json["disposition"] == "VERIFIED"
+
+        session_id = detail["task"]["session_id"]
+        [listed] = client.get(f"/chat/api/sessions/{session_id}/tasks").json()["tasks"]
+        assert listed["id"] == listed["task_id"] == task_id
+        assert listed["evidence"][0]["disposition"] == "VERIFIED"
+
+        normal = client.post(
+            f"/chat/api/live/{live_id}/messages", json={"content": "thanks"}
+        ).json()
+        assert normal == {"ok": True, "task_id": None}
+
+        reverted = client.post(f"/chat/api/tasks/{task_id}/revert").json()
+        assert reverted == {"reverted": ["calc.py"]}
+        assert client.post(f"/chat/api/tasks/{task_id}/cancel").json() == {"ok": True}
+        client.delete(f"/chat/api/live/{live_id}")

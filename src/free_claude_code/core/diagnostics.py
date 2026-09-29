@@ -59,9 +59,29 @@ class UpstreamErrorDetail:
     body_truncated: bool = False
 
 
+# Exact secret values resolved at runtime (vault refs, admin-set secrets).
+_REGISTERED_SECRETS: set[str] = set()
+_MIN_REGISTERED_SECRET_LEN = 8
+
+
+def register_secret_value(value: str) -> None:
+    """Redact this exact value from every diagnostic and log line from now on."""
+    # ponytail: process-lifetime set; secrets rotate rarely, so no removal API.
+    if len(value.strip()) >= _MIN_REGISTERED_SECRET_LEN:
+        _REGISTERED_SECRETS.add(value.strip())
+
+
+def redact_registered_secrets(text: str) -> str:
+    """Replace registered secret values (longest first) with ``<redacted>``."""
+    for secret in sorted(_REGISTERED_SECRETS, key=len, reverse=True):
+        if secret in text:
+            text = text.replace(secret, "<redacted>")
+    return text
+
+
 def redact_sensitive_error_text(text: str) -> str:
     """Redact recognizable credentials while preserving diagnostic context."""
-    sanitized = text
+    sanitized = redact_registered_secrets(text)
     for pattern, replacement in _SECRET_TEXT_REPLACEMENTS:
         sanitized = pattern.sub(replacement, sanitized)
     return sanitized

@@ -16,6 +16,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from free_claude_code.core.diagnostics import redact_registered_secrets
+
 _configured = False
 _current_path: Path | None = None
 _current_level = "INFO"
@@ -86,7 +88,7 @@ def _serialize_with_context(record) -> str:
                 continue
             out[tk] = tv
         out["trace"] = True
-    record["_json"] = json.dumps(out, default=str)
+    record["_json"] = redact_registered_secrets(json.dumps(out, default=str))
     return "{_json}\n"
 
 

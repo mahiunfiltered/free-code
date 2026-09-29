@@ -6,7 +6,11 @@ import os
 from enum import Enum
 
 from free_claude_code.config.env_files import dotenv_values_from_file
-from free_claude_code.config.loader import ConfigSource, resolve_settings_snapshot
+from free_claude_code.config.loader import (
+    VAULT_REF_PREFIX,
+    ConfigSource,
+    resolve_settings_snapshot,
+)
 from free_claude_code.config.paths import managed_env_path
 from free_claude_code.core.json_types import JsonObject
 
@@ -35,6 +39,8 @@ def normalize_for_env(value: object) -> str | None:
 def display_value(field: ConfigFieldSpec, value: str | None) -> str | None:
     """Return the Admin UI display value for a canonical config value."""
 
+    if value is not None and value.startswith(VAULT_REF_PREFIX):
+        return value  # a reference, never the secret itself
     if field.secret and value is not None:
         return MASKED_SECRET
     return value
@@ -57,6 +63,14 @@ def load_value_state() -> ValueState:
         if field.settings_attr is not None:
             value = normalize_for_env(getattr(snapshot.settings, field.settings_attr))
             source = snapshot.sources[field.settings_attr].value
+            raw = (
+                os.environ.get(field.key)
+                if source == ConfigSource.PROCESS.value
+                else managed.get(field.key)
+            )
+            if raw is not None and raw.strip().startswith(VAULT_REF_PREFIX):
+                # Show where the value lives; the resolved secret never leaves the loader.
+                value = raw.strip()
         elif field.key in os.environ:
             value = os.environ[field.key].strip() or None
             source = ConfigSource.PROCESS.value

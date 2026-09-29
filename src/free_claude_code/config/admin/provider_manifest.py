@@ -328,6 +328,24 @@ def _credential_field_specs() -> tuple[ConfigFieldSpec, ...]:
                 )
             )
         )
+        if descriptor.credential_pool_env is not None:
+            specs.append(
+                ConfigFieldSpec(
+                    key=descriptor.credential_pool_env,
+                    label=f"{descriptor.display_name} API Key Pool",
+                    section_id="providers",
+                    field_type="secret",
+                    settings_attr=descriptor.credential_pool_attr,
+                    secret=True,
+                    advanced=True,
+                    description=(
+                        "Optional extra keys for per-key failover: "
+                        "label1=key1,label2=key2 or a plain comma list "
+                        f"(labels default to key1..N). {descriptor.credential_env} "
+                        "is added to the pool when it is a different key."
+                    ),
+                )
+            )
     return tuple(specs)
 
 

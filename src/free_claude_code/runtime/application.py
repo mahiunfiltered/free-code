@@ -7,6 +7,7 @@ import inspect
 import logging
 import os
 import traceback
+import weakref
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 
@@ -23,7 +24,10 @@ from free_claude_code.application.connected_accounts import (
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import StopResult
-from free_claude_code.cli.managed.interactive import InteractiveClaudeSessions
+from free_claude_code.cli.managed.interactive import (
+    InteractiveClaudeSession,
+    InteractiveClaudeSessions,
+)
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
     commit_prepared_admin_update,
@@ -41,7 +45,9 @@ from free_claude_code.config.server_urls import (
     local_proxy_root_url,
 )
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.gateway_model_ids import gateway_model_id
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.storage import Store
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
 from free_claude_code.messaging.platforms.factory import MessagingPlatformOptions
 from free_claude_code.messaging.platforms.ports import (
@@ -49,6 +55,10 @@ from free_claude_code.messaging.platforms.ports import (
     MessagingRuntime,
 )
 from free_claude_code.messaging.voice import Transcriber
+from free_claude_code.providers.key_pool import EndpointPool
+from free_claude_code.workbench.intent import ModelClient
+from free_claude_code.workbench.model_client import ProxyModelClient
+from free_claude_code.workbench.service import WorkbenchService, launch_policy
 
 from .provider_manager import ProviderRuntimeManager
 
@@ -111,7 +121,11 @@ class ApplicationRuntime:
         transcriber: Transcriber | None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
+        store: Store | None = None,
+        endpoint_pool: EndpointPool | None = None,
     ) -> None:
+        """``store`` is the server-wide SQLite store (bootstrap owns it); without
+        one the runtime keeps workbench state in an in-memory store it owns."""
         self.provider_manager = provider_manager
         self._transcriber = transcriber
         self._restart_callback = restart_callback
@@ -127,9 +141,22 @@ class ApplicationRuntime:
             None
         )
         self._cli_manager: cli_managed.ManagedClaudeSessionManager | None = None
+        workbench_store = store if store is not None else Store(":memory:")
+        if store is None:
+            # Tests and embedders without a server Store: keep state for our lifetime.
+            weakref.finalize(self, workbench_store.close)
+        self._endpoint_pool = endpoint_pool
         self.chat_sessions = InteractiveClaudeSessions(
             proxy_target=self._proxy_target,
             app_sessions_path=config_dir_path() / "chat-sessions.json",
+            policy_compiler=launch_policy,
+            observer=self._observe_chat,
+        )
+        self.workbench = WorkbenchService(
+            workbench_store,
+            sessions=self.chat_sessions,
+            model_client_factory=self._model_client,
+            usage_lookup=self._session_usage if endpoint_pool is not None else None,
         )
         self._started = False
         self._closed = False
@@ -194,6 +221,14 @@ class ApplicationRuntime:
         updates: Mapping[str, ConfigInputValue],
     ) -> JsonObject:
         """Apply one validated config update without splitting runtime ownership."""
+        result = await self._apply_admin_config(updates)
+        self.workbench.record_config_apply(sorted(updates), result)
+        return result
+
+    async def _apply_admin_config(
+        self,
+        updates: Mapping[str, ConfigInputValue],
+    ) -> JsonObject:
         async with self._config_lock:
             prepared = prepare_admin_update(updates)
             if not prepared.valid:
@@ -452,7 +487,33 @@ class ApplicationRuntime:
         settings = self.settings
         return local_proxy_root_url(settings), settings.proxy_auth_token
 
+    def _observe_chat(
+        self, session: InteractiveClaudeSession, event: JsonObject
+    ) -> None:
+        self.workbench.observe(session, event)
+
+    def _model_client(self, model: str | None) -> ModelClient:
+        """Helper-model calls (intent, planner) go through this proxy and its key pool."""
+        return ProxyModelClient(
+            self._proxy_target, model or gateway_model_id(self.settings.model)
+        )
+
+    def _session_usage(self, claude_session_id: str) -> JsonObject | None:
+        if self._endpoint_pool is None:
+            return None
+        # ponytail: aggregates every session then filters; add a keyed query if slow.
+        for row in self._endpoint_pool.usage.session_totals():
+            if row.get("claude_session_id") == claude_session_id:
+                return {
+                    "input_tokens": row.get("input_tokens") or 0,
+                    "output_tokens": row.get("output_tokens") or 0,
+                    "requests": row.get("attempts") or 0,
+                    "failovers": row.get("failovers") or 0,
+                }
+        return None
+
     async def _close_owned_resources(self) -> bool:
+        await self.workbench.close()
         await self.chat_sessions.stop_all()
         if not await self._cleanup_messaging():
             return False

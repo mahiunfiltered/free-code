@@ -16,6 +16,7 @@ dependencies = [
     "markdown-it-py>=4.2.0",
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
+    "cryptography>=49.0.0",
     "tiktoken>=0.13.0",
     "python-telegram-bot>=22.8",
     "discord.py>=2.7.1",
@@ -42,6 +43,7 @@ fcc-grok = "free_claude_code.cli.launchers.grok:launch"
 fcc-muse = "free_claude_code.cli.launchers.muse:launch"
 fcc-aider = "free_claude_code.cli.launchers.aider:launch"
 fcc-model-switch = "free_claude_code.cli.launchers.model_switch:launch"
+fcc-secret = "free_claude_code.cli.secret_command:launch"
 
 [project.gui-scripts]
 fcc-desktop = "free_claude_code.cli.desktop_entrypoint:launch"

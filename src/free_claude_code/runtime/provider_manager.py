@@ -16,8 +16,10 @@ from free_claude_code.application.model_metadata import (
 )
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider
+from free_claude_code.providers.key_pool import EndpointPool
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.discovery import (
     ProviderModelDiscovery,
@@ -102,7 +104,9 @@ class ProviderRuntimeManager:
         runtime_factory: ProviderRuntimeFactory = ProviderRuntime,
         connected_provider_ids: ConnectedProviderIds = tuple,
         model_catalog_publisher: ModelCatalogPublisher | None = None,
+        endpoint_pool: EndpointPool | None = None,
     ) -> None:
+        self._endpoint_pool = endpoint_pool
         self._runtime_factory = runtime_factory
         self._connected_provider_ids = connected_provider_ids
         self._model_catalog_publisher = model_catalog_publisher
@@ -138,6 +142,24 @@ class ProviderRuntimeManager:
 
     def current_settings(self) -> Settings:
         return self._current.settings
+
+    def endpoint_health(self) -> JsonObject:
+        """Per provider/key health: circuit, cooldown, latency, recent errors."""
+        if self._endpoint_pool is None:
+            return {"enabled": False, "endpoints": []}
+        return {"enabled": True, **self._endpoint_pool.endpoint_health()}
+
+    def usage_summary(self, minutes: float) -> JsonObject:
+        """Usage aggregates per endpoint and session plus recent attempt rows."""
+        if self._endpoint_pool is None:
+            return {"enabled": False, "minutes": minutes}
+        return {"enabled": True, **self._endpoint_pool.usage_summary(minutes)}
+
+    def reset_endpoint(self, provider_id: str, label: str) -> bool:
+        """Close one key's circuit and clear its cooldown; False if unknown."""
+        if self._endpoint_pool is None:
+            return False
+        return self._endpoint_pool.reset_endpoint(provider_id, label)
 
     def cached_model_ids(self) -> dict[str, frozenset[str]]:
         self._synchronize_model_cache_scope()

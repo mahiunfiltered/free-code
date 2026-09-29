@@ -3,10 +3,11 @@
 import json
 import os
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from free_claude_code.core.claude_permission_modes import PERMISSION_MODES
@@ -15,7 +16,7 @@ from free_claude_code.core.json_types import JsonObject, JsonValue
 from .admin_routes import is_loopback_host, require_loopback_admin
 from .dependencies import get_services
 from .model_catalog import build_chat_models_response
-from .ports import ApiServices, ChatRuntimePort, ChatSessionPort
+from .ports import ApiServices, ChatRuntimePort, ChatSessionPort, WorkbenchPort
 
 
 def require_same_origin(request: Request) -> None:
@@ -52,15 +53,30 @@ _UI_CONTROL_SUBTYPES = frozenset(
 )
 
 
+class BudgetPayload(BaseModel):
+    max_turns: int | None = Field(default=None, gt=0)
+    max_minutes: float | None = Field(default=None, gt=0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
+
+
 class StartPayload(BaseModel):
     cwd: str
-    permission_mode: str = "default"
+    # None lets a policy preset choose; otherwise Claude's "default".
+    permission_mode: str | None = None
     model: str | None = None
     resume_session_id: str | None = None
+    policy_preset: Literal["restricted", "workspace", "privileged"] | None = None
+    budget: BudgetPayload | None = None
 
 
 class MessagePayload(BaseModel):
     content: JsonValue
+    mode: Literal["normal", "verified", "parallel"] = "normal"
+    strategy: Literal["economy", "balanced", "fastest"] = "balanced"
+
+
+class ClarifyPayload(BaseModel):
+    answers: str = Field(min_length=1, max_length=20_000)
 
 
 class ControlPayload(BaseModel):
@@ -79,6 +95,12 @@ def _chat(services: ApiServices = Depends(get_services)) -> ChatRuntimePort:
     if services.chat is None:
         raise HTTPException(status_code=503, detail="Chat is not available")
     return services.chat
+
+
+def _workbench(services: ApiServices = Depends(get_services)) -> WorkbenchPort:
+    if services.workbench is None:
+        raise HTTPException(status_code=503, detail="Workbench is not available")
+    return services.workbench
 
 
 def _live(live_id: str, chat: ChatRuntimePort) -> ChatSessionPort:
@@ -154,9 +176,11 @@ async def delete(session_id: str, chat: ChatRuntimePort = Depends(_chat)):
 async def start(payload: StartPayload, chat: ChatRuntimePort = Depends(_chat)):
     session = await chat.start(
         cwd=payload.cwd,
-        permission_mode=payload.permission_mode,
+        permission_mode=payload.permission_mode or None,
         model=payload.model or None,
         resume_session_id=payload.resume_session_id or None,
+        policy_preset=payload.policy_preset,
+        budget=payload.budget.model_dump() if payload.budget else None,
     )
     return session.snapshot()
 
@@ -182,10 +206,21 @@ async def events(
 
 @router.post("/chat/api/live/{live_id}/messages")
 async def send_message(
-    live_id: str, payload: MessagePayload, chat: ChatRuntimePort = Depends(_chat)
+    live_id: str,
+    payload: MessagePayload,
+    chat: ChatRuntimePort = Depends(_chat),
+    services: ApiServices = Depends(get_services),
 ):
-    await _live(live_id, chat).send_user_message(payload.content)
-    return {"ok": True}
+    session = _live(live_id, chat)
+    if payload.mode == "normal":
+        await session.send_user_message(payload.content)
+        return {"ok": True, "task_id": None}
+    task_id = await _workbench(services).start_task(
+        live_id, payload.content, mode=payload.mode, strategy=payload.strategy
+    )
+    if task_id is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return {"ok": True, "task_id": task_id}
 
 
 @router.post("/chat/api/live/{live_id}/control")
@@ -221,3 +256,98 @@ async def close(live_id: str, chat: ChatRuntimePort = Depends(_chat)):
     if not await chat.close(live_id):
         raise HTTPException(status_code=404, detail="Chat session not found")
     return {"ok": True}
+
+
+# ----- verified / parallel tasks ---------------------------------------------
+
+_TASK_NOT_FOUND = "Task not found"
+
+
+@router.post("/chat/api/tasks/{task_id}/clarify")
+async def clarify_task(
+    task_id: str,
+    payload: ClarifyPayload,
+    workbench: WorkbenchPort = Depends(_workbench),
+):
+    if not await workbench.clarify(task_id, payload.answers):
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND)
+    return {"ok": True}
+
+
+@router.get("/chat/api/tasks/{task_id}")
+async def get_task(task_id: str, workbench: WorkbenchPort = Depends(_workbench)):
+    task = workbench.task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND)
+    return task
+
+
+@router.get("/chat/api/tasks/{task_id}/evidence")
+async def task_evidence(
+    task_id: str,
+    format: Literal["markdown", "json"] = "markdown",
+    workbench: WorkbenchPort = Depends(_workbench),
+):
+    text = workbench.evidence(task_id, format)
+    if text is None:
+        raise HTTPException(status_code=404, detail="No evidence for this task")
+    if format == "json":
+        return json.loads(text)
+    return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
+
+
+@router.post("/chat/api/tasks/{task_id}/revert")
+async def revert_task(task_id: str, workbench: WorkbenchPort = Depends(_workbench)):
+    reverted = await workbench.revert(task_id)
+    if reverted is None:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND)
+    return {"reverted": reverted}
+
+
+@router.post("/chat/api/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str, workbench: WorkbenchPort = Depends(_workbench)):
+    if not await workbench.cancel(task_id):
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND)
+    return {"ok": True}
+
+
+@router.get("/chat/api/sessions/{session_id}/tasks")
+async def session_tasks(
+    session_id: str, workbench: WorkbenchPort = Depends(_workbench)
+) -> JsonObject:
+    return {"tasks": list(workbench.session_tasks(session_id))}
+
+
+@router.get("/chat/api/policy/presets")
+async def policy_presets(workbench: WorkbenchPort = Depends(_workbench)) -> JsonObject:
+    return {"presets": list(workbench.policy_presets())}
+
+
+@router.get("/chat/api/endpoints/summary")
+async def endpoints_summary(
+    services: ApiServices = Depends(get_services),
+) -> JsonObject:
+    """Per-provider key counts for the chat header's health chip."""
+
+    if services.endpoints is None:
+        return {"providers": []}
+    return {"providers": summarize_endpoints(services.endpoints.endpoint_health())}
+
+
+def summarize_endpoints(health: JsonObject) -> list[JsonValue]:
+    endpoints = health.get("endpoints")
+    counts: dict[str, dict[str, int]] = {}
+    for item in endpoints if isinstance(endpoints, list) else []:
+        if not isinstance(item, dict):
+            continue
+        row = counts.setdefault(
+            str(item.get("provider_id")),
+            {"healthy": 0, "total": 0, "cooling": 0, "open": 0},
+        )
+        cooling = bool(item.get("cooldown_remaining_s"))
+        opened = item.get("circuit") == "OPEN"
+        row["total"] += 1
+        row["cooling"] += cooling
+        row["open"] += opened
+        row["healthy"] += bool(item.get("available")) and not cooling and not opened
+    return [{"provider_id": provider_id, **row} for provider_id, row in counts.items()]

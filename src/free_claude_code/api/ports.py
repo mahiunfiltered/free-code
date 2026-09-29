@@ -76,9 +76,11 @@ class ChatRuntimePort(Protocol):
         self,
         *,
         cwd: str,
-        permission_mode: str = "default",
+        permission_mode: str | None = None,
         model: str | None = None,
         resume_session_id: str | None = None,
+        policy_preset: str | None = None,
+        budget: Mapping[str, JsonValue] | None = None,
     ) -> ChatSessionPort: ...
 
     def get(self, live_id: str) -> ChatSessionPort | None: ...
@@ -100,6 +102,54 @@ class ChatRuntimePort(Protocol):
     async def list_dirs(self, path: str) -> JsonObject: ...
 
 
+class EndpointPoolPort(Protocol):
+    """Provider key pool health and usage exposed by the local Admin API."""
+
+    def endpoint_health(self) -> JsonObject: ...
+
+    def usage_summary(self, minutes: float) -> JsonObject: ...
+
+    def reset_endpoint(self, provider_id: str, label: str) -> bool: ...
+
+
+class WorkbenchPort(Protocol):
+    """Verified/parallel tasks, policy presets, vault secrets and the audit log.
+
+    Lookups return ``None``/``False`` for unknown ids; invalid requests raise
+    ``InvalidRequestError`` (rendered as HTTP 400).
+    """
+
+    async def start_task(
+        self, live_id: str, content: JsonValue, *, mode: str, strategy: str
+    ) -> str | None: ...
+
+    async def clarify(self, task_id: str, answers: str) -> bool: ...
+
+    def task(self, task_id: str) -> JsonObject | None: ...
+
+    def evidence(self, task_id: str, fmt: str) -> str | None: ...
+
+    async def revert(self, task_id: str) -> list[str] | None: ...
+
+    async def cancel(self, task_id: str) -> bool: ...
+
+    def session_tasks(self, session_id: str) -> list[JsonObject]: ...
+
+    def policy_presets(self) -> list[JsonObject]: ...
+
+    def list_secrets(self) -> JsonObject: ...
+
+    def set_secret(self, name: str, value: str) -> None: ...
+
+    def delete_secret(self, name: str) -> bool: ...
+
+    def migrate_secrets(self) -> JsonObject: ...
+
+    def audit_records(
+        self, *, limit: int = 100, action: str = "", actor: str = ""
+    ) -> JsonObject: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ApiServices:
     """Complete runtime boundary required to construct the API application."""
@@ -108,3 +158,5 @@ class ApiServices:
     admin: AdminRuntimePort
     tasks: TaskController
     chat: ChatRuntimePort | None = None
+    endpoints: EndpointPoolPort | None = None
+    workbench: WorkbenchPort | None = None

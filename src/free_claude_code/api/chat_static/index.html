@@ -61,6 +61,11 @@
             <span class="top-btn-label">Changes</span>
             <span class="badge" id="changesCount" hidden>0</span>
           </button>
+          <button class="top-btn" id="verifyBtn" type="button" title="Verification" aria-label="Verification" aria-expanded="false" aria-controls="verifyPanel" hidden>
+            <svg viewBox="0 0 20 20"><path d="M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z" /><path d="M7.3 10.2l2 2 3.6-4" /></svg>
+            <span class="top-btn-label">Verification</span>
+            <span class="vbadge" id="verifyBadge" hidden><span class="vdot"></span><span class="vbadge-text" id="verifyBadgeText"></span></span>
+          </button>
         </header>
 
         <section class="scroller" id="scroller">
@@ -91,8 +96,43 @@
                   <button class="chip" id="modeBtn" type="button" title="Permission mode (Shift+Tab)"></button>
                   <div class="popover" id="modeMenu" hidden></div>
                 </div>
+                <div class="menu-anchor">
+                  <button class="chip" id="runModeBtn" type="button" title="Run mode" aria-haspopup="true" aria-expanded="false" aria-controls="runModeMenu">Chat</button>
+                  <div class="popover" id="runModeMenu" role="menu" aria-label="Run mode" hidden></div>
+                </div>
+                <div class="menu-anchor">
+                  <button class="icon-btn" id="settingsBtn" type="button" title="Session settings" aria-label="Session settings" aria-haspopup="true" aria-expanded="false" aria-controls="settingsMenu">
+                    <svg viewBox="0 0 20 20"><path d="M4 6h7M15 6h1M4 14h1M9 14h7" /><circle cx="13" cy="6" r="2" /><circle cx="7" cy="14" r="2" /></svg>
+                  </button>
+                  <div class="popover settings-pop" id="settingsMenu" role="dialog" aria-labelledby="settingsTitle" hidden>
+                    <div class="settings-head">
+                      <h3 id="settingsTitle">Session settings</h3>
+                      <p>Applied when the next session starts.</p>
+                    </div>
+                    <label class="field">
+                      <span>Policy preset</span>
+                      <select id="policySelect">
+                        <option value="">None (Claude Code defaults)</option>
+                        <option value="restricted">Restricted</option>
+                        <option value="workspace">Workspace</option>
+                        <option value="privileged">Privileged</option>
+                      </select>
+                    </label>
+                    <div class="policy-rules" id="policyRules" aria-live="polite"></div>
+                    <div class="field-group" role="group" aria-labelledby="budgetLabel">
+                      <span class="field-label" id="budgetLabel">Budgets <small>(max per session, blank = no limit)</small></span>
+                      <div class="budget-grid">
+                        <label class="field"><span>Turns</span><input id="budgetTurns" type="number" min="1" step="1" inputmode="numeric" placeholder="—" /></label>
+                        <label class="field"><span>Minutes</span><input id="budgetMinutes" type="number" min="1" step="1" inputmode="numeric" placeholder="—" /></label>
+                        <label class="field"><span>Output tokens</span><input id="budgetTokens" type="number" min="1" step="1000" inputmode="numeric" placeholder="—" /></label>
+                      </div>
+                    </div>
+                    <p class="settings-current" id="settingsCurrent"></p>
+                  </div>
+                </div>
               </div>
               <div class="bar-right">
+                <button class="health-chip" id="healthChip" type="button" hidden><span class="hdot"></span><span class="health-text" id="healthText"></span></button>
                 <span class="ctx-chip" id="ctxChip" hidden></span>
                 <div class="menu-anchor model-anchor">
                   <button class="chip" id="modelBtn" type="button" title="Model">Default model</button>
@@ -125,6 +165,17 @@
           </button>
         </div>
         <div class="changes-list" id="changesList"></div>
+      </aside>
+
+      <aside class="changes verify" id="verifyPanel" aria-label="Verification">
+        <div class="changes-head">
+          <h2>Verification</h2>
+          <span class="changes-sub" id="verifySub"></span>
+          <button class="icon-btn" id="closeVerify" type="button" title="Close verification" aria-label="Close verification">
+            <svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" /></svg>
+          </button>
+        </div>
+        <div class="changes-list" id="verifyList"></div>
       </aside>
     </div>
 

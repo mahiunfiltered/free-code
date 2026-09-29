@@ -71,6 +71,106 @@
               aria-label="Messaging configuration"
             ></div>
           </section>
+
+          <section id="view-endpoints" class="admin-view" data-view="endpoints" hidden>
+            <div class="view-toolbar">
+              <p class="view-intro">
+                Live health of every provider key. Refreshes every 5 seconds while this view is open.
+              </p>
+              <span id="endpointsUpdated" class="view-updated" aria-live="polite"></span>
+            </div>
+            <div id="endpointsBody" class="form-sections" aria-label="Endpoint health"></div>
+          </section>
+
+          <section id="view-usage" class="admin-view" data-view="usage" hidden>
+            <div class="view-toolbar">
+              <label class="inline-field" for="usageWindow">
+                <span>Window</span>
+                <select id="usageWindow">
+                  <option value="15">15 minutes</option>
+                  <option value="60" selected>1 hour</option>
+                  <option value="1440">24 hours</option>
+                  <option value="10080">7 days</option>
+                </select>
+              </label>
+              <button id="usageRefresh" class="secondary-button" type="button">Refresh</button>
+            </div>
+            <div id="usageBody" class="form-sections" aria-label="Usage"></div>
+          </section>
+
+          <section id="view-secrets" class="admin-view" data-view="secrets" hidden>
+            <section class="settings-section">
+              <div class="section-heading">
+                <div>
+                  <h3>Credential vault</h3>
+                  <p>
+                    Secrets are encrypted on this machine and never shown again after saving.
+                    Reference one from <code>.env</code> as <code>NVIDIA_NIM_API_KEY=vault:nvidia</code>;
+                    the server resolves <code>vault:&lt;name&gt;</code> values when it loads config.
+                  </p>
+                </div>
+                <span id="vaultStatus" class="status-pill">Checking</span>
+              </div>
+              <div id="vaultError" class="notice error" hidden></div>
+              <form id="secretForm" class="secret-form" autocomplete="off">
+                <div class="field">
+                  <label for="secretName"><span>Name</span></label>
+                  <input id="secretName" type="text" placeholder="nvidia" autocomplete="off" required />
+                </div>
+                <div class="field">
+                  <label for="secretValue"><span>Value</span></label>
+                  <input id="secretValue" type="password" autocomplete="new-password" required />
+                </div>
+                <button id="secretSave" class="primary-button" type="submit">Save secret</button>
+              </form>
+            </section>
+            <section class="settings-section">
+              <div class="section-heading">
+                <div>
+                  <h3>Stored secrets</h3>
+                  <p>Names only. Saving an existing name replaces its value.</p>
+                </div>
+              </div>
+              <div id="secretList" class="secret-list"></div>
+            </section>
+            <section class="settings-section">
+              <div class="section-heading">
+                <div>
+                  <h3>Move plaintext keys into the vault</h3>
+                  <p>
+                    Encrypts every plaintext API key in the managed .env and rewrites it as a
+                    <code>vault:</code> reference. A backup of the old file is written first.
+                  </p>
+                </div>
+                <button id="secretMigrate" class="secondary-button" type="button">Move keys</button>
+              </div>
+              <div id="migrateResult" class="notice" hidden></div>
+            </section>
+          </section>
+
+          <section id="view-audit" class="admin-view" data-view="audit" hidden>
+            <form id="auditFilters" class="view-toolbar">
+              <label class="inline-field" for="auditAction">
+                <span>Action</span>
+                <input id="auditAction" type="text" placeholder="any" autocomplete="off" />
+              </label>
+              <label class="inline-field" for="auditActor">
+                <span>Actor</span>
+                <input id="auditActor" type="text" placeholder="any" autocomplete="off" />
+              </label>
+              <button class="secondary-button" type="submit">Filter</button>
+              <span id="auditIntegrity" class="status-pill">Checking</span>
+            </form>
+            <div id="auditBody" class="form-sections" aria-label="Audit log"></div>
+          </section>
+
+          <section id="view-policy" class="admin-view" data-view="policy" hidden>
+            <p class="view-intro">
+              Presets a chat session can run under. Deny rules always block, ask rules always
+              prompt, and allow rules run without a prompt. Read-only here.
+            </p>
+            <div id="policyBody" class="policy-grid" aria-label="Policy presets"></div>
+          </section>
         </div>
       </main>
 

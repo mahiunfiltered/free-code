@@ -116,6 +116,16 @@ class ProviderDescriptor:
     proxy_attr: str | None = None
     required_settings_attrs: tuple[str, ...] = ()
 
+    @property
+    def credential_pool_env(self) -> str | None:
+        """Plural companion env var holding a multi-key pool (e.g. ``..._API_KEYS``)."""
+        return None if self.credential_env is None else f"{self.credential_env}S"
+
+    @property
+    def credential_pool_attr(self) -> str | None:
+        """Settings attribute backing :attr:`credential_pool_env`."""
+        return None if self.credential_attr is None else f"{self.credential_attr}s"
+
     def configuration_attrs(self) -> tuple[str, ...]:
         """Return settings fields whose non-empty values configure this provider."""
         if self.required_settings_attrs:

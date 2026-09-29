@@ -40,6 +40,11 @@ def provider_config_status(
             attr
             for attr in configuration_attrs
             if not _value_for_settings_attr(state, attr)
+            and not (
+                attr == descriptor.credential_attr
+                and descriptor.credential_pool_attr is not None
+                and _value_for_settings_attr(state, descriptor.credential_pool_attr)
+            )
         )
         missing_configuration_keys = [
             _field_key_for_settings_attr(attr) for attr in missing_attrs

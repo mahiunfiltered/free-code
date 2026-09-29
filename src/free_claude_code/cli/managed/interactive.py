@@ -11,8 +11,10 @@ import itertools
 import json
 import os
 import shutil
+import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
@@ -46,6 +48,51 @@ class ChatSessionError(InvalidRequestError):
     """User-facing failure while starting or driving a chat session."""
 
 
+@dataclass(frozen=True, slots=True)
+class ChatBudget:
+    """Per-chat limits; exceeding one interrupts the turn and blocks new prompts."""
+
+    max_turns: int | None = None
+    max_minutes: float | None = None
+    max_output_tokens: int | None = None
+
+    @classmethod
+    def from_json(cls, obj: Mapping[str, JsonValue] | None) -> ChatBudget | None:
+        if not obj:
+            return None
+        values: list[float | None] = []
+        for key in ("max_turns", "max_minutes", "max_output_tokens"):
+            value = obj.get(key)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or value <= 0
+            ):
+                raise ChatSessionError(f"budget.{key} must be a positive number")
+            values.append(value)
+        turns, minutes, tokens = values
+        budget = cls(
+            max_turns=None if turns is None else max(1, int(turns)),
+            max_minutes=None if minutes is None else float(minutes),
+            max_output_tokens=None if tokens is None else max(1, int(tokens)),
+        )
+        return None if budget == cls() else budget
+
+    def to_json(self) -> JsonObject:
+        return {
+            "max_turns": self.max_turns,
+            "max_minutes": self.max_minutes,
+            "max_output_tokens": self.max_output_tokens,
+        }
+
+
+type SessionObserver = Callable[[InteractiveClaudeSession, JsonObject], None]
+"""Called with every published event (injection scanning, usage, audit)."""
+
+type PolicyCompiler = Callable[[str, str], tuple[str, str]]
+"""``(preset, cwd) -> (settings_json, permission_mode)``; raises ValueError."""
+
+
 def build_interactive_claude_argv(
     *,
     claude_bin: str,
@@ -53,6 +100,9 @@ def build_interactive_claude_argv(
     model: str | None,
     resume_session_id: str | None,
     cwd: str | None = None,
+    settings_json: str | None = None,
+    max_turns: int | None = None,
+    extra_system_prompt: str | None = None,
 ) -> list[str]:
     """Return the stream-json argv for one interactive chat process."""
 
@@ -75,8 +125,16 @@ def build_interactive_claude_argv(
         argv += ["--model", model]
     if resume_session_id:
         argv += ["--resume", resume_session_id]
-    if cwd:
-        argv += ["--append-system-prompt", workspace_prompt(cwd)]
+    if settings_json:
+        argv += ["--settings", settings_json]
+    if max_turns:
+        # Hidden in `claude --help` but supported; caps agentic turns per prompt.
+        argv += ["--max-turns", str(max_turns)]
+    system = "\n\n".join(
+        part for part in (cwd and workspace_prompt(cwd), extra_system_prompt) if part
+    )
+    if system:
+        argv += ["--append-system-prompt", system]
     return argv
 
 
@@ -113,10 +171,26 @@ class InteractiveClaudeSession:
         resume_session_id: str | None,
         on_release: Callable[[], None] | None = None,
         on_conversation: Callable[[str], None] | None = None,
+        policy_preset: str | None = None,
+        budget: ChatBudget | None = None,
+        observer: SessionObserver | None = None,
     ) -> None:
         """``on_conversation`` fires with the session id once a prompt was sent."""
 
         self.live_id = live_id
+        self.policy_preset = policy_preset
+        self.budget = budget
+        self._observer = observer
+        self._input_tokens = 0
+        self._output_tokens = 0
+        self._turns = 0
+        # Output tokens per assistant message id in the running turn.
+        self._turn_output: dict[str, int] = {}
+        self._busy_since: float | None = None
+        self._busy_total_s = 0.0
+        self._budget_hit: str | None = None
+        self._budget_timer: asyncio.TimerHandle | None = None
+        self._side_tasks: set[asyncio.Task[None]] = set()
         self._on_conversation = on_conversation
         self.cwd = cwd
         self.permission_mode = permission_mode
@@ -129,7 +203,8 @@ class InteractiveClaudeSession:
         self._events: list[JsonObject] = []
         self._subscribers: set[asyncio.Queue[JsonObject | None]] = set()
         self._pending_controls: dict[str, asyncio.Future[JsonObject]] = {}
-        self._open_permission_ids: set[str] = set()
+        # Pending can_use_tool request id -> tool name.
+        self._open_permission_ids: dict[str, str] = {}
         self._request_ids = itertools.count(1)
         self._process: asyncio.subprocess.Process | None = None
         self._tasks: list[asyncio.Task[None]] = []
@@ -183,7 +258,13 @@ class InteractiveClaudeSession:
     async def send_user_message(self, content: JsonValue) -> None:
         if self.exited:
             raise ChatSessionError("Session has ended; start it again to continue.")
+        if self._budget_hit is not None:
+            raise ChatSessionError(
+                f"This chat's {self._budget_hit} budget is used up; "
+                "start a new chat to continue."
+            )
         self.busy = True
+        self._start_clock()
         self.has_messages = True
         self._announce_conversation()
         message: JsonObject = {
@@ -233,7 +314,7 @@ class InteractiveClaudeSession:
 
         if request_id not in self._open_permission_ids:
             raise ChatSessionError("That permission request is no longer pending.")
-        self._open_permission_ids.discard(request_id)
+        tool_name = self._open_permission_ids.pop(request_id)
         await self._write(
             {
                 "type": "control_response",
@@ -249,6 +330,7 @@ class InteractiveClaudeSession:
                 "type": "fcc_permission_resolved",
                 "request_id": request_id,
                 "behavior": decision.get("behavior"),
+                "tool_name": tool_name,
             }
         )
 
@@ -294,7 +376,124 @@ class InteractiveClaudeSession:
             "busy": self.busy,
             "exited": self.exited,
             "has_messages": self.has_messages,
+            "policy_preset": self.policy_preset,
+            "budget": None if self.budget is None else self.budget.to_json(),
+            "usage": self.usage(),
         }
+
+    def usage(self) -> JsonObject:
+        """Session totals so far, including the running turn."""
+
+        running = (
+            time.monotonic() - self._busy_since if self._busy_since is not None else 0.0
+        )
+        return {
+            "input_tokens": self._input_tokens,
+            "output_tokens": self._output_tokens + sum(self._turn_output.values()),
+            "turns": self._turns + len(self._turn_output),
+            "elapsed_s": round(self._busy_total_s + running, 1),
+        }
+
+    def publish(self, event: JsonObject) -> None:
+        """Add a synthetic event to the replay log and every live subscriber."""
+
+        self._publish(event)
+
+    # ----- budget ----------------------------------------------------------
+
+    def _start_clock(self) -> None:
+        if self._busy_since is not None:
+            return
+        self._busy_since = time.monotonic()
+        minutes = self.budget.max_minutes if self.budget else None
+        if minutes is not None:
+            remaining = max(0.0, minutes * 60 - self._busy_total_s)
+            self._budget_timer = asyncio.get_running_loop().call_later(
+                remaining, self._time_budget_spent
+            )
+
+    def _stop_clock(self) -> None:
+        if self._busy_since is not None:
+            self._busy_total_s += time.monotonic() - self._busy_since
+            self._busy_since = None
+        if self._budget_timer is not None:
+            self._budget_timer.cancel()
+            self._budget_timer = None
+
+    def _time_budget_spent(self) -> None:
+        self._budget_timer = None
+        if self.budget and self.budget.max_minutes is not None:
+            elapsed = self.usage()["elapsed_s"]
+            used = round(elapsed / 60, 2) if isinstance(elapsed, float) else elapsed
+            self._exceed_budget("time", self.budget.max_minutes, used)
+
+    def _check_budget(self) -> None:
+        if self.budget is None or self._budget_hit is not None:
+            return
+        usage = self.usage()
+        for kind, limit, used in (
+            ("tokens", self.budget.max_output_tokens, usage["output_tokens"]),
+            ("turns", self.budget.max_turns, usage["turns"]),
+        ):
+            if limit is not None and isinstance(used, int) and used > limit:
+                self._exceed_budget(kind, limit, used)
+                return
+
+    def _exceed_budget(self, kind: str, limit: float, used: JsonValue) -> None:
+        if self._budget_hit is not None:
+            return
+        self._budget_hit = kind
+        self._publish(
+            {
+                "type": "fcc_budget",
+                "kind": kind,
+                "limit": limit,
+                "used": used,
+                "action": "interrupted",
+            }
+        )
+        if self.busy and not self.exited:
+            task = asyncio.get_running_loop().create_task(self._interrupt())
+            self._side_tasks.add(task)
+            task.add_done_callback(self._side_tasks.discard)
+
+    async def _interrupt(self) -> None:
+        try:
+            await self.control({"subtype": "interrupt"})
+        except ChatSessionError as exc:
+            logger.warning("Budget interrupt failed: {}", exc)
+
+    def _track_usage(self, event: JsonObject) -> None:
+        kind = event.get("type")
+        if kind == "assistant":
+            message = event.get("message")
+            if not isinstance(message, dict):
+                return
+            usage = message.get("usage")
+            output = usage.get("output_tokens") if isinstance(usage, dict) else None
+            key = str(message.get("id") or f"_{len(self._turn_output)}")
+            self._turn_output[key] = max(
+                self._turn_output.get(key, 0), output if isinstance(output, int) else 0
+            )
+            self._check_budget()
+        elif kind == "result":
+            usage = event.get("usage")
+            usage = usage if isinstance(usage, dict) else {}
+            tokens_in = usage.get("input_tokens")
+            tokens_out = usage.get("output_tokens")
+            turns = event.get("num_turns")
+            self._input_tokens += tokens_in if isinstance(tokens_in, int) else 0
+            self._output_tokens += (
+                tokens_out
+                if isinstance(tokens_out, int)
+                else sum(self._turn_output.values())
+            )
+            self._turns += (
+                turns if isinstance(turns, int) else max(1, len(self._turn_output))
+            )
+            self._turn_output.clear()
+            self._stop_clock()
+            self._check_budget()
 
     # ----- internals -------------------------------------------------------
 
@@ -308,6 +507,11 @@ class InteractiveClaudeSession:
                 self._trim_events()
         for queue in self._subscribers:
             queue.put_nowait(event)
+        if self._observer is not None:
+            try:
+                self._observer(self, event)
+            except Exception:
+                logger.exception("Chat event observer failed")
 
     def _trim_events(self) -> None:
         """Drop the oldest replay events, keeping what a reconnecting UI needs."""
@@ -394,7 +598,7 @@ class InteractiveClaudeSession:
         if kind == "control_cancel_request":
             request_id = event.get("request_id")
             if isinstance(request_id, str):
-                self._open_permission_ids.discard(request_id)
+                self._open_permission_ids.pop(request_id, None)
                 self._publish(
                     {"type": "fcc_permission_resolved", "request_id": request_id}
                 )
@@ -410,6 +614,7 @@ class InteractiveClaudeSession:
             if isinstance(model := event.get("model"), str):
                 self.model = model
             self._publish(self._state_event())
+        self._track_usage(event)
         self._publish(event)
         if kind == "result":
             self.busy = False
@@ -434,7 +639,7 @@ class InteractiveClaudeSession:
         if not isinstance(request_id, str) or not isinstance(request, dict):
             return
         if request.get("subtype") == "can_use_tool":
-            self._open_permission_ids.add(request_id)
+            self._open_permission_ids[request_id] = str(request.get("tool_name", ""))
             self._publish(event)
             return
         # We register no hooks or SDK MCP servers; never leave Claude waiting.
@@ -463,6 +668,7 @@ class InteractiveClaudeSession:
         unregister_pid(process.pid)
         self.exited = True
         self.busy = False
+        self._stop_clock()
         self._open_permission_ids.clear()
         for future in self._pending_controls.values():
             if not future.done():
@@ -500,6 +706,8 @@ class InteractiveClaudeSessions:
         proxy_target: Callable[[], tuple[str, str]],
         claude_bin: str = CLAUDE_BINARY_NAME,
         app_sessions_path: Path | None = None,
+        policy_compiler: PolicyCompiler | None = None,
+        observer: SessionObserver | None = None,
     ) -> None:
         """``proxy_target`` returns the current ``(proxy_root_url, auth_token)``.
 
@@ -509,6 +717,8 @@ class InteractiveClaudeSessions:
 
         self._proxy_target = proxy_target
         self._claude_bin = claude_bin
+        self._policy_compiler = policy_compiler
+        self._observer = observer
         self._app_sessions_path = app_sessions_path
         self._app_session_ids = _load_id_set(app_sessions_path)
         self._sessions: dict[str, InteractiveClaudeSession] = {}
@@ -523,15 +733,37 @@ class InteractiveClaudeSessions:
         self,
         *,
         cwd: str,
-        permission_mode: str = "default",
+        permission_mode: str | None = None,
         model: str | None = None,
         resume_session_id: str | None = None,
+        policy_preset: str | None = None,
+        budget: Mapping[str, JsonValue] | None = None,
+        extra_system_prompt: str | None = None,
     ) -> InteractiveClaudeSession:
-        if permission_mode not in PERMISSION_MODES:
+        """Start one chat process.
+
+        ``policy_preset`` adds FCC permission rules via ``--settings``; an explicit
+        ``permission_mode`` wins over the preset's mode.
+        """
+
+        if permission_mode is not None and permission_mode not in PERMISSION_MODES:
             raise ChatSessionError(f"Unknown permission mode '{permission_mode}'.")
+        chat_budget = ChatBudget.from_json(budget)
         workspace = os.path.abspath(os.path.expanduser(cwd))
         if not os.path.isdir(workspace):
             raise ChatSessionError(f"Folder does not exist: {workspace}")
+        settings_json: str | None = None
+        if policy_preset:
+            if self._policy_compiler is None:
+                raise ChatSessionError("Policy presets are not available.")
+            try:
+                settings_json, preset_mode = self._policy_compiler(
+                    policy_preset, workspace
+                )
+            except ValueError as exc:
+                raise ChatSessionError(str(exc)) from exc
+            permission_mode = permission_mode or preset_mode
+        permission_mode = permission_mode or "default"
         claude_bin = shutil.which(self._claude_bin)
         if claude_bin is None:
             raise ChatSessionError(
@@ -547,6 +779,9 @@ class InteractiveClaudeSessions:
             resume_session_id=resume_session_id,
             on_release=lambda: self._close_soon(live_id),
             on_conversation=self._remember_app_session,
+            policy_preset=policy_preset or None,
+            budget=chat_budget,
+            observer=self._observer,
         )
         await session.start(
             argv=build_interactive_claude_argv(
@@ -555,6 +790,9 @@ class InteractiveClaudeSessions:
                 model=model,
                 resume_session_id=resume_session_id,
                 cwd=workspace,
+                settings_json=settings_json,
+                max_turns=chat_budget.max_turns if chat_budget else None,
+                extra_system_prompt=extra_system_prompt,
             ),
             env=build_managed_claude_env(
                 proxy_root_url=proxy_root_url,

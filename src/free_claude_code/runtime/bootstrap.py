@@ -3,18 +3,22 @@ from __future__ import annotations
 """Single production composition root for the FCC server."""
 
 import os
+import weakref
 from functools import partial
 from pathlib import Path
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.config import paths
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import server_log_path
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.storage import Store
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
+from free_claude_code.providers.key_pool import EndpointPool
 from free_claude_code.providers.nvidia_nim.voice import NvidiaNimTranscriber
 from free_claude_code.providers.openai_codex import (
     OpenAIAuthManager,
@@ -42,9 +46,12 @@ def build_asgi_app(
     )
     openai_auth = OpenAIAuthManager(proxy=settings.openai_proxy)
     openai_codex_factory = partial(_create_openai_codex_provider, auth=openai_auth)
+    store = Store(paths.config_dir_path() / "fcc.db")
+    endpoint_pool = EndpointPool(store)
     provider_constructor = partial(
         create_provider,
         injected_factories={"openai": openai_codex_factory},
+        endpoint_pool=endpoint_pool,
     )
     runtime_factory = partial(
         ProviderRuntime,
@@ -55,20 +62,28 @@ def build_asgi_app(
         runtime_factory=runtime_factory,
         connected_provider_ids=openai_auth.connected_provider_ids,
         model_catalog_publisher=CodexModelCatalogPublisher(),
+        endpoint_pool=endpoint_pool,
     )
     runtime = ApplicationRuntime(
         provider_manager,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth},
+        store=store,
+        endpoint_pool=endpoint_pool,
     )
     services = ApiServices(
         requests=provider_manager,
         admin=runtime,
         tasks=runtime,
         chat=runtime.chat_sessions,
+        endpoints=provider_manager,
+        workbench=runtime.workbench,
     )
-    return RuntimeASGIApp(create_app(services), runtime)
+    asgi_app = RuntimeASGIApp(create_app(services), runtime)
+    # The server-wide Store lives exactly as long as the application it serves.
+    weakref.finalize(asgi_app, store.close)
+    return asgi_app
 
 
 def _create_openai_codex_provider(

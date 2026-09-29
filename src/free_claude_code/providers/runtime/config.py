@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.config.provider_catalog import ProviderDescriptor
+from free_claude_code.config.provider_keys import provider_keys
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import ProviderConfig
 
@@ -23,7 +24,11 @@ def provider_credential(
     if descriptor.static_credential is not None:
         return descriptor.static_credential
     if descriptor.credential_attr:
-        return string_setting(settings, descriptor.credential_attr)
+        single = string_setting(settings, descriptor.credential_attr)
+        if single:
+            return single
+        keys = provider_keys(descriptor, settings)
+        return keys[0].key if keys else None
     return None
 
 
@@ -33,7 +38,12 @@ def has_provider_configuration(
     """Return whether all provider-defining settings are present."""
     attrs = descriptor.configuration_attrs()
     if attrs:
-        return all(string_setting(settings, attr) for attr in attrs)
+        return all(
+            provider_credential(descriptor, settings)
+            if attr == descriptor.credential_attr
+            else string_setting(settings, attr)
+            for attr in attrs
+        )
     return descriptor.static_credential is not None
 
 

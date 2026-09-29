@@ -50,7 +50,19 @@ const state = {
   source: null,
   skipReplay: false,
   attachments: [],
+  // Run mode for the next message: normal | verified | parallel (+ parallel strategy).
+  runMode: store.get("fcc.runMode", "normal"),
+  strategy: store.get("fcc.strategy", "balanced"),
+  // Session settings sent on the next session start.
+  policy: store.get("fcc.policy", ""),
+  budget: readJson(store.get("fcc.budget", "{}")),
+  session: {}, // policy_preset / budget / usage from the live snapshot
+  usage: null, // fcc_usage totals
 };
+
+function readJson(text) {
+  try { const v = JSON.parse(text); return v && typeof v === "object" ? v : {}; } catch { return {}; }
+}
 
 /* ------------------------------------------------------------------ api */
 
@@ -200,10 +212,14 @@ function resetView() {
     working: null,
     lastUsage: null,
     changes: new Map(), // file path -> { path, ops: [{ toolId, name, input }] }, most recent last
+    tasks: new Map(), // task_id -> verified / parallel task model (see ensureTask)
+    injections: new Map(), // tool_use_id -> signals seen before the tool card rendered
   };
+  state.usage = null;
   setEmpty(true);
   setContext(0);
   renderChanges();
+  renderVerify();
   renderTodoDock(null);
 }
 
@@ -452,6 +468,7 @@ function renderToolUse(block, parent) {
   }
   (parent ? parent.children : currentTurn()).append(card);
   view.tools.set(block.id, { node: card, body, children, name, input: block.input });
+  if (view.injections.has(block.id)) markInjection(block.id, view.injections.get(block.id));
   if (name === "TodoWrite" && !parent) renderTodoDock(block.input?.todos);
 }
 
@@ -554,6 +571,7 @@ function revealTool(toolId) {
 function toggleChanges(open) {
   const app = $("app");
   const show = open ?? !app.classList.contains("show-changes");
+  if (show) toggleVerify(false);
   app.classList.toggle("show-changes", show);
   $("changesBtn").setAttribute("aria-expanded", String(show));
   if (!mobile.matches) store.set("fcc.changes", show ? "1" : "0");
@@ -650,7 +668,32 @@ function setContext(tokens, max) {
   chip.hidden = !tokens;
   const pct = max ? Math.round((tokens / max) * 100) : null;
   chip.textContent = pct === null ? `${kTokens(tokens)} tokens` : `${pct}% context`;
-  chip.title = `Context in use: ${tokens.toLocaleString()}${max ? ` of ${max.toLocaleString()}` : ""} tokens`;
+  chip.title = `Context in use: ${tokens.toLocaleString()}${max ? ` of ${max.toLocaleString()}` : ""} tokens${usageLine()}`;
+  setContext.last = [tokens, max];
+}
+
+// Session totals from fcc_usage (per-request records) or the live snapshot, appended to the context tooltip.
+function usageLine() {
+  const u = { ...(state.session.usage || {}), ...(state.usage || {}) };
+  const parts = [];
+  if (u.input_tokens != null) parts.push(`${Number(u.input_tokens).toLocaleString()} input`);
+  if (u.output_tokens != null) parts.push(`${Number(u.output_tokens).toLocaleString()} output tokens`);
+  if (u.requests != null) parts.push(`${u.requests} request${u.requests === 1 ? "" : "s"}`);
+  if (u.turns != null) parts.push(`${u.turns} turn${u.turns === 1 ? "" : "s"}`);
+  if (u.failovers) parts.push(`${u.failovers} failover${u.failovers === 1 ? "" : "s"}`);
+  return parts.length ? `\nSession: ${parts.join(" · ")}` : "";
+}
+
+function applyUsage(usage) {
+  state.usage = usage;
+  const [tokens, max] = setContext.last || [0];
+  if (tokens) return setContext(tokens, max);
+  if (usage && (usage.input_tokens || usage.output_tokens)) {
+    const chip = $("ctxChip");
+    chip.hidden = false;
+    chip.textContent = `${kTokens((usage.input_tokens || 0) + (usage.output_tokens || 0))} tokens`;
+    chip.title = `Tokens used this session${usageLine()}`;
+  }
 }
 
 /* -------------------------------------------------- permission prompts */
@@ -792,7 +835,8 @@ function handleEvent(event) {
   if (state.skipReplay) {
     // Saved transcript already rendered: only pick up state and still-open prompts.
     if (event.type === "fcc_replay_end") { state.skipReplay = false; return; }
-    if (!["fcc_state", "fcc_initialize", "control_request", "fcc_permission_resolved", "system"].includes(event.type)) return;
+    // Task events still rebuild the Verification panel; inline cards are skipped (the transcript has no anchors).
+    if (!["fcc_state", "fcc_initialize", "control_request", "fcc_permission_resolved", "system", "fcc_usage"].includes(event.type) && !TASK_EVENTS.has(event.type)) return;
     if (event.type === "system" && event.subtype !== "init") return;
   }
   switch (event.type) {
@@ -820,7 +864,12 @@ function handleEvent(event) {
       refreshSessions();
       return;
     case "fcc_raw": return;
-    default: return;
+    case "fcc_usage": return applyUsage(event);
+    case "fcc_budget": return renderBudget(event);
+    case "fcc_injection": return markInjection(event.tool_use_id, event.signals);
+    default:
+      if (TASK_EVENTS.has(event.type)) handleTaskEvent(event);
+      return;
   }
 }
 
@@ -853,6 +902,7 @@ function applyLiveState(snapshot) {
   if (snapshot.session_id) state.sessionId = snapshot.session_id;
   if (snapshot.permission_mode) state.mode = snapshot.permission_mode;
   if (snapshot.model) state.model = snapshot.model;
+  for (const key of ["policy_preset", "budget", "usage"]) if (key in snapshot) state.session[key] = snapshot[key];
   setWorking(state.busy);
   renderControls();
   markActiveSession();
@@ -933,6 +983,8 @@ async function startLive() {
       permission_mode: state.mode,
       model: store.get("fcc.model", "") || null,
       resume_session_id: state.sessionId,
+      policy_preset: state.policy || null,
+      budget: budgetBody(),
     },
   });
   state.exited = false;
@@ -975,6 +1027,7 @@ async function openTranscript(summary) {
   try {
     const { events } = await api(`/chat/api/transcripts/${encodeURIComponent(summary.session_id)}`);
     for (const event of events) handleEvent(event);
+    loadTaskHistory(summary.session_id);
     // Saved transcripts carry no result events, so replayed prompts must not leave "Working…" up.
     setWorking(false);
     showUsage();
@@ -1122,7 +1175,15 @@ async function send() {
     if (state.title === "New chat" && text) setTitle(text.slice(0, 60));
     state.busy = true;
     renderControls();
-    await api(`/chat/api/live/${state.liveId}/messages`, { method: "POST", body: { content } });
+    const runMode = state.runMode;
+    const body = { content, mode: runMode };
+    if (runMode === "parallel") body.strategy = state.strategy;
+    const res = await api(`/chat/api/live/${state.liveId}/messages`, { method: "POST", body });
+    if (runMode !== "normal") {
+      // Older servers answer {ok: true} without task_id and run the message as a plain chat turn.
+      if (!("task_id" in res)) status(`This server does not support ${RUN_MODES[runMode].label} mode yet; sent as a normal message.`, true);
+      else if (res.task_id && !view.tasks.has(String(res.task_id))) handleTaskEvent({ type: "fcc_task", task_id: res.task_id, mode: runMode, status: "RECEIVED" });
+    }
   } catch (err) {
     state.busy = false;
     renderControls();
@@ -1534,6 +1595,1052 @@ $("folderDialog").addEventListener("close", async () => {
   await newChat();
 });
 
+/* ------------------------------------------------ run modes & settings */
+
+const RUN_MODES = {
+  normal: { label: "Chat", hint: "Plain conversation with Claude Code", placeholder: "Ask Claude to build, fix, or explain…" },
+  verified: { label: "Verified", hint: "Intent contract, verification gate, auto-recovery", placeholder: "Describe the change. Claude checks it against real evidence before calling it done…" },
+  parallel: { label: "Parallel", hint: "Split into a task graph of parallel sessions, then verify", placeholder: "Describe a larger change to split across parallel sessions…" },
+};
+// Max concurrent nodes per strategy (workbench.orchestration.runner.PARALLELISM).
+const STRATEGIES = { economy: "One node at a time", balanced: "Up to 3 nodes at once", fastest: "Up to 6 nodes at once" };
+const BUDGET_FIELDS = [["max_turns", "budgetTurns"], ["max_minutes", "budgetMinutes"], ["max_output_tokens", "budgetTokens"]];
+
+const cap = (s) => (s ? `${s[0].toUpperCase()}${s.slice(1)}` : "");
+
+function renderRunMode() {
+  const btn = $("runModeBtn");
+  const mode = RUN_MODES[state.runMode];
+  btn.textContent = state.runMode === "parallel" ? `${mode.label} · ${cap(state.strategy)}` : mode.label;
+  btn.className = `chip run-${state.runMode}`;
+  btn.title = `Run mode: ${mode.label} — ${mode.hint}`;
+  input.placeholder = mode.placeholder;
+}
+
+function setRunMode(value) {
+  state.runMode = value;
+  store.set("fcc.runMode", value);
+  renderRunMode();
+  scheduleVerify();
+}
+
+function menuRadio(label, hint, checked, onPick) {
+  const item = el("button", `menu-item${checked ? " selected" : ""}`, label);
+  item.type = "button";
+  item.setAttribute("role", "menuitemradio");
+  item.setAttribute("aria-checked", String(checked));
+  if (hint) item.append(el("small", "", hint));
+  item.onclick = onPick;
+  return item;
+}
+
+function renderRunModeMenu() {
+  const menu = $("runModeMenu");
+  menu.replaceChildren();
+  for (const [value, mode] of Object.entries(RUN_MODES)) {
+    menu.append(menuRadio(mode.label, mode.hint, value === state.runMode, () => {
+      setRunMode(value);
+      if (value === "parallel") {
+        renderRunModeMenu();
+        menu.querySelector(".segmented [aria-checked=true]")?.focus();
+      } else closePopovers();
+    }));
+  }
+  if (state.runMode !== "parallel") return;
+  const group = el("div", "strategy");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", "Parallel strategy");
+  group.append(el("div", "menu-group", "Strategy"));
+  const seg = el("div", "segmented");
+  for (const [value, hint] of Object.entries(STRATEGIES)) {
+    const b = el("button", "", cap(value));
+    b.type = "button";
+    b.title = hint;
+    b.setAttribute("role", "menuitemradio");
+    b.setAttribute("aria-checked", String(value === state.strategy));
+    b.onclick = () => {
+      state.strategy = value;
+      store.set("fcc.strategy", value);
+      renderRunMode();
+      renderRunModeMenu();
+      menu.querySelector(".segmented [aria-checked=true]")?.focus();
+    };
+    seg.append(b);
+  }
+  group.append(seg, el("small", "strategy-hint", STRATEGIES[state.strategy]));
+  menu.append(group);
+}
+
+const presets = { loaded: false, supported: true, list: [] };
+let settingsDirty = false;
+
+async function loadPresets() {
+  if (presets.loaded) return;
+  presets.loaded = true;
+  try {
+    const res = await fetch("/chat/api/policy/presets");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    presets.list = Array.isArray(data.presets) ? data.presets.filter((p) => p && typeof p.id === "string") : [];
+  } catch {
+    presets.supported = false; // older server: choices are still saved and sent
+  }
+  renderSettings();
+}
+
+function budgetBody() {
+  const out = {};
+  for (const [key] of BUDGET_FIELDS) {
+    const v = Number(state.budget[key]);
+    out[key] = Number.isFinite(v) && v > 0 ? Math.floor(v) : null;
+  }
+  return Object.values(out).some((v) => v !== null) ? out : null;
+}
+
+function budgetText(budget) {
+  const b = budget || {};
+  const parts = [];
+  if (b.max_turns) parts.push(`${b.max_turns} turns`);
+  if (b.max_minutes) parts.push(`${b.max_minutes} min`);
+  if (b.max_output_tokens) parts.push(`${Number(b.max_output_tokens).toLocaleString()} output tokens`);
+  return parts.length ? parts.join(" · ") : "no budgets";
+}
+
+function renderSettings() {
+  $("policySelect").value = state.policy;
+  for (const [key, id] of BUDGET_FIELDS) if (document.activeElement !== $(id)) $(id).value = state.budget[key] ?? "";
+  const rules = $("policyRules");
+  rules.replaceChildren();
+  const preset = presets.list.find((p) => p.id === state.policy);
+  if (!presets.supported) {
+    rules.append(el("p", "note", "This server has no policy presets yet. Your choice is saved and sent once it does."));
+  } else if (!state.policy) {
+    rules.append(el("p", "note", "No FCC policy: Claude Code's own permission settings apply."));
+  } else if (preset) {
+    const mode = MODES.find((m) => m.value === preset.permission_mode);
+    if (preset.permission_mode) rules.append(el("div", "rules-mode", `Permission mode: ${mode ? mode.label : preset.permission_mode}`));
+    const list = el("ul", "rules");
+    for (const rule of Array.isArray(preset.rules) ? preset.rules : []) list.append(el("li", "", String(rule)));
+    if (list.children.length) rules.append(list);
+  } else if (!presets.loaded || presets.list.length) {
+    rules.append(el("p", "note", presets.loaded ? "Unknown preset." : "Loading rules…"));
+  }
+  const s = state.session;
+  $("settingsCurrent").textContent =
+    "policy_preset" in s || "budget" in s ? `This session: ${s.policy_preset || "no policy"} · ${budgetText(s.budget)}` : "";
+}
+
+// An unused warm process restarts right away so the new settings apply to the first message.
+async function applySettings() {
+  settingsDirty = false;
+  if (!state.liveId || state.exited) return;
+  if (state.hasMessages || state.busy) {
+    status("Session settings apply when this chat's next session starts.");
+    return;
+  }
+  const old = state.liveId;
+  state.source?.close();
+  state.sessionId = null;
+  await api(`/chat/api/live/${old}`, { method: "DELETE" }).catch(() => {});
+  try {
+    await startLive();
+    status("Session settings applied.");
+  } catch (err) {
+    status(err.message, true);
+  }
+}
+
+function closePopovers() {
+  for (const pop of document.querySelectorAll(".popover")) pop.hidden = true;
+  syncExpanded();
+}
+
+function syncExpanded() {
+  for (const [btn, pop] of [["runModeBtn", "runModeMenu"], ["settingsBtn", "settingsMenu"]]) $(btn).setAttribute("aria-expanded", String(!$(pop).hidden));
+  if (settingsDirty && $("settingsMenu").hidden) applySettings();
+}
+
+/* ------------------------------------------------------ endpoint health */
+
+const PROVIDER_NAMES = { nvidia_nim: "NIM", open_router: "OpenRouter", openrouter: "OpenRouter", lmstudio: "LM Studio", llamacpp: "llama.cpp", ollama: "Ollama", deepseek: "DeepSeek" };
+const health = { timer: 0 };
+
+async function loadHealth() {
+  const chip = $("healthChip");
+  let data;
+  try {
+    const res = await fetch("/chat/api/endpoints/summary");
+    if (res.status === 404 || res.status === 405) {
+      // ponytail: endpoint missing on this server; stop polling until the page reloads.
+      chip.hidden = true;
+      clearInterval(health.timer);
+      health.timer = 0;
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  } catch {
+    chip.hidden = true;
+    return;
+  }
+  if (!health.timer) health.timer = setInterval(loadHealth, 20000);
+  renderHealth(Array.isArray(data?.providers) ? data.providers : []);
+}
+
+function renderHealth(providers) {
+  const chip = $("healthChip");
+  const list = providers.filter((p) => p && Number(p.total) > 0);
+  chip.hidden = !list.length;
+  if (!list.length) return;
+  const tone = (p) => (!Number(p.healthy) ? "bad" : Number(p.cooling) || Number(p.open) || p.healthy < p.total ? "warn" : "ok");
+  const rank = { ok: 0, warn: 1, bad: 2 };
+  const name = (p) => PROVIDER_NAMES[p.provider_id] || p.provider_id || "Provider";
+  const worst = [...list].sort((a, b) => rank[tone(b)] - rank[tone(a)])[0];
+  const text = `${name(worst)} ${worst.healthy}/${worst.total} key${worst.total === 1 ? "" : "s"} healthy${list.length > 1 ? ` +${list.length - 1}` : ""}`;
+  chip.dataset.tone = tone(worst);
+  $("healthText").textContent = text;
+  const lines = list.map((p) => `${name(p)}: ${p.healthy}/${p.total} healthy${p.cooling ? `, ${p.cooling} cooling down` : ""}${p.open ? `, ${p.open} circuit open` : ""}`);
+  chip.title = `${lines.join("\n")}\nOpen Providers & models`;
+  chip.setAttribute("aria-label", `Endpoint health: ${lines.join("; ")}. Opens Providers & models in a new tab.`);
+}
+
+/* ----------------------------------------------------- budget, injection */
+
+function renderBudget(event) {
+  const limit = Number(event.limit);
+  const n = Number.isFinite(limit) ? limit.toLocaleString() : String(event.limit ?? "?");
+  const what = { turns: `turn limit (${n})`, time: `time limit (${n} min)`, tokens: `output token limit (${n})` }[event.kind] || `${event.kind || "budget"} limit (${n})`;
+  const node = notice(`Stopped: ${what} reached`, "warn");
+  if (event.used != null) node.title = `Used ${event.used} of ${event.limit}`;
+}
+
+function markInjection(toolId, signals) {
+  if (!toolId) return;
+  const list = (Array.isArray(signals) ? signals : [signals]).filter((s) => s != null && s !== "").map(String);
+  const tool = view.tools.get(toolId);
+  if (!tool) {
+    view.injections.set(toolId, list); // the card renders later (or never, for replay-only history)
+    return;
+  }
+  view.injections.delete(toolId);
+  if (tool.node.querySelector(":scope > summary .inj-badge")) return;
+  const label = "Possible prompt injection in tool output";
+  const badge = el("span", "inj-badge", "Injection?");
+  badge.title = `${label}${list.length ? `: ${list.join(", ")}` : ""}`;
+  badge.setAttribute("aria-label", badge.title);
+  tool.node.querySelector(":scope > summary .tool-arg")?.after(badge);
+  const note = el("div", "inj-note");
+  note.setAttribute("role", "note");
+  note.append(el("strong", "", label));
+  if (list.length) note.append(el("div", "", `Signals: ${list.join(", ")}`));
+  note.append(el("div", "", "Claude was told to treat this output as data, not instructions."));
+  tool.body.prepend(note);
+}
+
+/* ---------------------------------------------------- verified tasks */
+
+const TASK_EVENTS = new Set([
+  "fcc_task", "fcc_intent", "fcc_checkpoint", "fcc_verification_started", "fcc_verification_check",
+  "fcc_verification", "fcc_recovery", "fcc_orchestration",
+]);
+const TERMINAL_TASK = new Set(["VERIFIED", "CANCELLED", "FAILED"]);
+const PRE_LOCK = new Set(["RECEIVED", "INTENT_COMPILED", "BLOCKED_FOR_CLARIFICATION"]);
+const DISPOSITIONS = {
+  VERIFIED: ["ok", "Verified", "Every required check passed and each requirement has evidence."],
+  FAILED_VERIFICATION: ["bad", "Failed verification", "A required check or requirement failed."],
+  NEEDS_REVIEW: ["warn", "Needs review", "The evidence does not prove the change yet."],
+};
+const RISKS = ["low", "medium", "high", "critical"];
+const CHECK_ICONS = { passed: "✓", failed: "✕", error: "!", skipped: "–", advisory_failed: "!", needs_review: "?", running: "" };
+
+const pretty = (s) => (s ? cap(String(s).toLowerCase().replace(/_/g, " ")) : "Starting");
+const shortSha = (s) => (s ? String(s).slice(0, 8) : "");
+
+function ensureTask(id) {
+  let task = view.tasks.get(id);
+  if (!task) {
+    task = {
+      id, mode: "verified", status: null, reason: "", intent: null, checkpoint: null,
+      attempts: new Map(), evidence: null, disposition: null, timeline: [], orch: null,
+      reverted: null, clarifySent: false, answerDraft: "", card: null,
+    };
+    view.tasks.set(id, task);
+  }
+  return task;
+}
+
+function timeline(task, text, kind, at) {
+  const time = at ? new Date(at) : new Date();
+  task.timeline.push({ time: Number.isNaN(time.getTime()) ? new Date() : time, text, kind: kind || "" });
+}
+
+function attemptOf(task, n) {
+  const key = Number(n) || task.attempts.size || 1;
+  if (!task.attempts.has(key)) task.attempts.set(key, { n: key, level: "", checks: new Map(), disposition: null });
+  return task.attempts.get(key);
+}
+
+function handleTaskEvent(ev) {
+  if (!ev.task_id) return;
+  const task = ensureTask(String(ev.task_id));
+  switch (ev.type) {
+    case "fcc_task":
+      if (ev.mode) task.mode = ev.mode;
+      if (ev.status && (ev.status !== task.status || (ev.reason && ev.reason !== task.reason))) {
+        task.status = ev.status;
+        task.reason = ev.reason || "";
+        timeline(task, `${pretty(ev.status)}${ev.reason ? ` — ${ev.reason}` : ""}`, "status");
+      }
+      break;
+    case "fcc_intent": {
+      const blocked = ev.status === "blocked_for_clarification";
+      task.intent = {
+        status: ev.status,
+        contract: ev.contract && typeof ev.contract === "object" ? ev.contract : {},
+        questions: Array.isArray(ev.questions) ? ev.questions.map(String) : [],
+        warnings: Array.isArray(ev.warnings) ? ev.warnings.map(String) : [],
+      };
+      task.clarifySent = false;
+      timeline(task, blocked ? `Intent needs clarification (${task.intent.questions.length} question${task.intent.questions.length === 1 ? "" : "s"})` : "Intent contract ready to lock", blocked ? "warn" : "");
+      break;
+    }
+    case "fcc_checkpoint":
+      task.checkpoint = { id: ev.checkpoint_id, supported: ev.supported !== false, head: ev.head };
+      timeline(task, task.checkpoint.supported ? `Checkpoint created at ${shortSha(ev.head) || "working tree"}` : "No checkpoint here (not a git repository): revert is unavailable");
+      break;
+    case "fcc_verification_started": {
+      const attempt = attemptOf(task, ev.attempt);
+      attempt.level = ev.level || attempt.level;
+      for (const check of Array.isArray(ev.checks) ? ev.checks : []) {
+        if (check?.id != null) attempt.checks.set(String(check.id), { ...check, status: "running" });
+      }
+      timeline(task, `Verification attempt ${attempt.n} started${attempt.level ? ` (${attempt.level})` : ""}: ${attempt.checks.size} check${attempt.checks.size === 1 ? "" : "s"}`);
+      break;
+    }
+    case "fcc_verification_check": {
+      const check = ev.check || {};
+      if (check.id == null) break;
+      const attempt = attemptOf(task, ev.attempt);
+      attempt.checks.set(String(check.id), { ...(attempt.checks.get(String(check.id)) || {}), ...check });
+      break;
+    }
+    case "fcc_verification":
+      applyEvidence(task, ev.attempt, ev.disposition, ev.evidence);
+      timeline(task, `Attempt ${attemptOf(task, ev.attempt).n}: ${DISPOSITIONS[task.disposition]?.[1] || pretty(task.disposition)}`, DISPOSITIONS[task.disposition]?.[0]);
+      break;
+    case "fcc_recovery": {
+      const action = { retry: "retrying", ask_user: "asking you", give_up: "giving up", none: "no recovery needed" }[ev.action] || ev.action;
+      const strategy = ev.strategy && ev.strategy !== ev.action && ev.strategy !== "none" ? ` with ${pretty(ev.strategy).toLowerCase()}` : "";
+      timeline(task, `Recovery after attempt ${ev.attempt ?? "?"}: ${action}${strategy}${ev.reason ? ` — ${ev.reason}` : ""}`, "recovery");
+      break;
+    }
+    case "fcc_orchestration":
+      applyOrchestration(task, ev.event || {});
+      break;
+    default:
+      break;
+  }
+  renderTaskCard(task, !state.skipReplay);
+  scheduleVerify();
+}
+
+function applyEvidence(task, attemptNo, disposition, evidence) {
+  const e = evidence && typeof evidence === "object" ? evidence : {};
+  const attempt = attemptOf(task, attemptNo);
+  for (const check of Array.isArray(e.checks) ? e.checks : []) {
+    if (check?.id != null) attempt.checks.set(String(check.id), { ...(attempt.checks.get(String(check.id)) || {}), ...check });
+  }
+  attempt.level = attempt.level || e.level || "";
+  attempt.disposition = disposition || e.disposition || null;
+  task.disposition = attempt.disposition;
+  task.evidence = e;
+  if (!task.intent && e.contract) task.intent = { status: "ready_to_lock", contract: e.contract, questions: [], warnings: [] };
+}
+
+function applyOrchestration(task, ev) {
+  task.mode = "parallel";
+  const o = task.orch || (task.orch = { status: "planning", nodes: new Map(), integration: null, integrating: false, error: "" });
+  const node = (id) => {
+    const key = String(id);
+    if (!o.nodes.has(key)) o.nodes.set(key, { id: key, objective: "", role: "", depends_on: [], write_scope: [], status: "pending" });
+    return o.nodes.get(key);
+  };
+  const setGraph = (graph) => {
+    for (const n of Array.isArray(graph?.nodes) ? graph.nodes : []) if (n?.id != null) Object.assign(node(n.id), n);
+  };
+  switch (ev.type) {
+    case "orchestration_started":
+      o.status = "running";
+      setGraph(ev.graph);
+      timeline(task, `Task graph started: ${o.nodes.size} node${o.nodes.size === 1 ? "" : "s"}`);
+      break;
+    case "node_started":
+      Object.assign(node(ev.node_id), { status: "running", ...(ev.role ? { role: ev.role } : {}), ...(ev.branch ? { branch: ev.branch } : {}) });
+      timeline(task, `Node ${ev.node_id} started`);
+      break;
+    case "node_progress":
+      if (Array.isArray(ev.tools)) node(ev.node_id).tools = ev.tools.map(String);
+      break;
+    case "node_completed":
+      Object.assign(node(ev.node_id), {
+        status: "completed", summary: ev.summary || "", turns: ev.turns, cost_usd: ev.cost_usd,
+        reverted_out_of_scope: Array.isArray(ev.reverted_out_of_scope) ? ev.reverted_out_of_scope : [],
+      });
+      timeline(task, `Node ${ev.node_id} completed`, "ok");
+      break;
+    case "node_failed":
+      Object.assign(node(ev.node_id), { status: "failed", error: ev.error || "" });
+      timeline(task, `Node ${ev.node_id} failed${ev.error ? `: ${ev.error}` : ""}`, "bad");
+      break;
+    case "node_blocked":
+      node(ev.node_id).status = "blocked";
+      timeline(task, `Node ${ev.node_id} blocked by a failed dependency`, "warn");
+      break;
+    case "node_cancelled":
+      node(ev.node_id).status = "cancelled";
+      break;
+    case "integration_started":
+      o.integrating = true;
+      timeline(task, "Integrating node branches");
+      break;
+    case "integration_completed":
+      o.integrating = false;
+      o.integration = ev;
+      timeline(task, `Integration ${ev.status === "conflicts" ? "finished with conflicts" : "complete"}`, ev.status === "conflicts" ? "warn" : "");
+      break;
+    case "integration_failed":
+      o.integrating = false;
+      o.integration = { status: "failed", error: ev.error || "" };
+      timeline(task, `Integration failed${ev.error ? `: ${ev.error}` : ""}`, "bad");
+      break;
+    case "orchestration_completed":
+      setGraph(ev.graph);
+      if (ev.integration) o.integration = ev.integration;
+      o.status = ev.status || "completed";
+      timeline(task, `Task graph finished: ${pretty(o.status).toLowerCase()}`, o.status === "needs_attention" ? "warn" : "");
+      break;
+    case "orchestration_failed":
+      o.status = "failed";
+      o.error = ev.error || "";
+      timeline(task, `Task graph failed${ev.error ? `: ${ev.error}` : ""}`, "bad");
+      break;
+    case "orchestration_cancelled":
+      setGraph(ev.graph);
+      o.status = "cancelled";
+      timeline(task, "Task graph cancelled");
+      break;
+    default:
+      break;
+  }
+}
+
+function taskTone(task) {
+  const s = task.status;
+  if (s === "VERIFIED") return "ok";
+  if (s === "FAILED_VERIFICATION" || s === "FAILED") return "bad";
+  if (s === "RECOVERY_REQUIRED" || s === "BLOCKED_FOR_CLARIFICATION") return "warn";
+  if (s === "CANCELLED") return "muted";
+  if (!s && task.disposition) return DISPOSITIONS[task.disposition]?.[0] || "run";
+  return "run";
+}
+
+function taskLabel(task) {
+  return !task.status && task.disposition ? DISPOSITIONS[task.disposition]?.[1] || pretty(task.disposition) : pretty(task.status);
+}
+
+function shortTaskLabel(task) {
+  const tone = taskTone(task);
+  if (tone === "ok") return "Verified";
+  if (tone === "bad") return "Failed";
+  if (tone === "muted") return "Cancelled";
+  if (tone === "warn") return task.status === "BLOCKED_FOR_CLARIFICATION" ? "Input needed" : "Review";
+  return "Running";
+}
+
+function pill(tone, text) {
+  return el("span", `pill tone-${tone}`, text);
+}
+
+function taskLine(task) {
+  if (task.disposition) {
+    const reasons = task.evidence?.blocking_reasons;
+    const first = Array.isArray(reasons) && reasons.length ? String(reasons[0]) : "";
+    if (task.disposition === "VERIFIED") return DISPOSITIONS.VERIFIED[2];
+    return first || DISPOSITIONS[task.disposition]?.[2] || "";
+  }
+  const attempt = [...task.attempts.values()].pop();
+  if (attempt) {
+    const done = [...attempt.checks.values()].filter((c) => c.status !== "running").length;
+    return `Verifying (attempt ${attempt.n}): ${done}/${attempt.checks.size} checks done`;
+  }
+  if (task.orch) {
+    const nodes = [...task.orch.nodes.values()];
+    const done = nodes.filter((n) => n.status === "completed").length;
+    return task.orch.integrating ? "Integrating node branches…" : `${done}/${nodes.length} nodes done`;
+  }
+  return task.reason || "";
+}
+
+// One compact inline card per task; heavier detail lives in the Verification panel.
+function renderTaskCard(task, create) {
+  if (!task.card) {
+    if (!create) return;
+    const root = el("div", "task-card");
+    root.dataset.taskId = task.id;
+    task.card = { root, head: el("div", "task-head"), line: el("div", "task-line"), contract: el("div"), clarify: el("div"), contractKey: null, clarifyKey: null };
+    root.append(task.card.head, task.card.line, task.card.contract, task.card.clarify);
+    view.turn = null;
+    append(root);
+  }
+  const { root, head, line } = task.card;
+  const tone = taskTone(task);
+  root.dataset.tone = tone;
+  const icon = el("span", "task-icon");
+  icon.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z"/><path d="M7.3 10.2l2 2 3.6-4"/></svg>';
+  const open = el("button", "btn small task-open", "Details");
+  open.type = "button";
+  open.setAttribute("aria-label", "Open this task in the Verification panel");
+  open.onclick = () => revealTask(task.id);
+  head.replaceChildren(icon, el("span", "task-kind", `${task.mode === "parallel" ? "Parallel" : "Verified"} task`), pill(tone, taskLabel(task)), open);
+  line.textContent = taskLine(task);
+  line.hidden = !line.textContent;
+  renderCardContract(task);
+  renderClarify(task);
+}
+
+function contractNode(contract, openByDefault) {
+  const c = contract || {};
+  const details = el("details", "contract");
+  details.open = openByDefault;
+  const summary = el("summary");
+  summary.append(el("span", "", "Intent contract"));
+  if (RISKS.includes(c.risk)) summary.append(el("span", `risk risk-${c.risk}`, `${c.risk} risk`));
+  details.append(summary);
+  const body = el("div", "contract-body");
+  if (c.goal) body.append(el("p", "contract-goal", String(c.goal)));
+  const section = (label, items, cls) => {
+    const list = Array.isArray(items) ? items.filter((i) => i != null && i !== "") : [];
+    if (!list.length) return;
+    const box = el("div", `contract-sec${cls ? ` ${cls}` : ""}`);
+    const ul = el("ul");
+    for (const item of list) ul.append(el("li", "", String(item)));
+    box.append(el("div", "contract-label", label), ul);
+    body.append(box);
+  };
+  const scope = c.scope && typeof c.scope === "object" ? c.scope : {};
+  const strs = (v) => (Array.isArray(v) ? v.map(String) : []);
+  section("Must", c.must, "must");
+  section("Must not", c.must_not, "mustnot");
+  section("Preserve", c.preserve, "preserve");
+  section("Scope", [
+    ...strs(scope.allowed_paths).map((p) => `May change: ${p}`),
+    ...strs(scope.protected_paths).map((p) => `Protected: ${p}`),
+    ...strs(scope.prohibited_ops).map((p) => `Never: ${p}`),
+  ]);
+  section("Acceptance criteria", c.acceptance_criteria);
+  if (!body.children.length) body.append(el("p", "note", "No explicit requirements were extracted."));
+  details.append(body);
+  return details;
+}
+
+function renderCardContract(task) {
+  const box = task.card.contract;
+  if (task.card.contractKey === task.intent) return;
+  task.card.contractKey = task.intent;
+  box.replaceChildren();
+  if (!task.intent) return;
+  box.append(contractNode(task.intent.contract, task.intent.status === "blocked_for_clarification"));
+  if (task.intent.warnings.length) {
+    const warn = el("ul", "task-warnings");
+    for (const w of task.intent.warnings) warn.append(el("li", "", w));
+    box.append(warn);
+  }
+}
+
+function renderClarify(task) {
+  const box = task.card.clarify;
+  const intent = task.intent;
+  const show = intent?.status === "blocked_for_clarification" && (!task.status || PRE_LOCK.has(task.status));
+  const key = show ? `${task.clarifySent}|${intent.questions.join("\n")}` : "";
+  if (task.card.clarifyKey === key) return;
+  task.card.clarifyKey = key;
+  box.replaceChildren();
+  box.className = show ? "clarify" : "";
+  if (!show) return;
+  if (task.clarifySent) {
+    box.append(el("p", "note", "Answers sent. Recompiling the contract…"));
+    return;
+  }
+  const id = `clarify-${task.id}`;
+  const title = el("h4", "", "Claude needs answers before locking the contract");
+  title.id = `${id}-title`;
+  const questions = el("ol", "clarify-questions");
+  for (const q of intent.questions) questions.append(el("li", "", q));
+  const area = el("textarea", "clarify-input");
+  area.id = id;
+  area.rows = 3;
+  area.placeholder = "Answer the questions above…";
+  area.setAttribute("aria-labelledby", title.id);
+  area.value = task.answerDraft;
+  area.oninput = () => (task.answerDraft = area.value);
+  const submit = el("button", "btn primary", "Send answers");
+  submit.type = "button";
+  submit.onclick = () => submitClarify(task, area, submit);
+  area.onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit.click(); };
+  const actions = el("div", "prompt-actions");
+  actions.append(submit, el("small", "note", "Ctrl+Enter to send"));
+  box.append(title, questions, area, actions);
+}
+
+async function submitClarify(task, area, button) {
+  const answers = area.value.trim();
+  if (!answers) { area.focus(); return; }
+  button.disabled = true;
+  try {
+    await api(`/chat/api/tasks/${encodeURIComponent(task.id)}/clarify`, { method: "POST", body: { answers } });
+    task.clarifySent = true;
+    task.answerDraft = "";
+    timeline(task, "Clarification answers sent");
+    renderTaskCard(task, false);
+    scheduleVerify();
+  } catch (err) {
+    button.disabled = false;
+    status(`Could not send answers: ${err.message}`, true);
+  }
+}
+
+async function loadTaskHistory(sessionId) {
+  let tasks;
+  try {
+    const res = await fetch(`/chat/api/sessions/${encodeURIComponent(sessionId)}/tasks`);
+    if (!res.ok) return; // older server: no task history
+    tasks = (await res.json()).tasks;
+  } catch {
+    return;
+  }
+  if (sessionId !== state.sessionId || !Array.isArray(tasks)) return;
+  for (const record of tasks) seedTask(record);
+  scheduleVerify();
+}
+
+function seedTask(record) {
+  const id = record?.task_id ?? record?.id;
+  if (id == null || view.tasks.has(String(id))) return; // the live replay already built it
+  const task = ensureTask(String(id));
+  task.mode = record.mode || "verified";
+  task.status = record.status || null;
+  task.reason = record.reason || "";
+  if (record.contract) task.intent = { status: "ready_to_lock", contract: record.contract, questions: [], warnings: [] };
+  const cp = record.checkpoint;
+  if (cp) task.checkpoint = { id: cp.id, supported: cp.supported ?? cp.commit != null, head: cp.head };
+  const evidence = Array.isArray(record.evidence) ? record.evidence : record.evidence ? [record.evidence] : [];
+  evidence.forEach((entry, i) => {
+    const pkg = entry.package || entry.evidence || entry;
+    applyEvidence(task, entry.attempt ?? i + 1, entry.disposition || pkg.disposition, pkg);
+  });
+  timeline(task, `Saved task: ${taskLabel(task)}`, "", record.updated_at || record.created_at);
+}
+
+/* ------------------------------------------------- verification panel */
+
+let verifyQueued = false;
+function scheduleVerify() {
+  if (verifyQueued) return;
+  verifyQueued = true;
+  requestAnimationFrame(() => {
+    verifyQueued = false;
+    renderVerify();
+  });
+}
+
+function toggleVerify(open) {
+  const app = $("app");
+  const show = open ?? !app.classList.contains("show-verify");
+  if (show) {
+    toggleChanges(false);
+    renderVerify();
+  }
+  app.classList.toggle("show-verify", show);
+  $("verifyBtn").setAttribute("aria-expanded", String(show));
+}
+
+function revealTask(id) {
+  toggleVerify(true);
+  const section = [...$("verifyList").querySelectorAll("details.vtask")].find((d) => d.dataset.key === `t:${id}`);
+  if (!section) return;
+  section.open = true;
+  section.scrollIntoView({ block: "start", behavior: "smooth" });
+  section.querySelector("summary")?.focus({ preventScroll: true });
+}
+
+function keyed(details, key, openByDefault, remembered) {
+  details.dataset.key = key;
+  details.open = remembered.has(key) ? remembered.get(key) : openByDefault;
+  return details;
+}
+
+function renderVerify() {
+  const tasks = [...view.tasks.values()].reverse();
+  const latest = tasks[0];
+  const btn = $("verifyBtn");
+  btn.hidden = !tasks.length && state.runMode === "normal";
+  $("verifyBadge").hidden = !latest;
+  if (latest) {
+    $("verifyBadge").dataset.tone = taskTone(latest);
+    $("verifyBadgeText").textContent = shortTaskLabel(latest);
+  }
+  const label = latest ? `Verification: ${taskLabel(latest)}` : "Verification";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  $("verifySub").textContent = tasks.length ? `${tasks.length} task${tasks.length === 1 ? "" : "s"}` : "";
+  const list = $("verifyList");
+  const remembered = new Map([...list.querySelectorAll("details[data-key]")].map((d) => [d.dataset.key, d.open]));
+  const scroll = list.scrollTop;
+  list.replaceChildren();
+  if (!tasks.length) {
+    list.append(el("div", "changes-empty", "Verified and Parallel runs show their contract, checks, evidence and recovery here. Pick a run mode next to the permission chip."));
+    return;
+  }
+  tasks.forEach((task, i) => list.append(taskSection(task, i === 0, remembered)));
+  list.scrollTop = scroll;
+}
+
+function taskSection(task, isLatest, remembered) {
+  const section = keyed(el("details", "vtask"), `t:${task.id}`, isLatest, remembered);
+  const summary = el("summary", "vtask-sum");
+  summary.append(el("span", "vtask-title", `${task.mode === "parallel" ? "Parallel" : "Verified"} task`), el("span", "vtask-id", shortSha(task.id)), pill(taskTone(task), taskLabel(task)));
+  const body = el("div", "vtask-body");
+  const goal = task.intent?.contract?.goal;
+  if (goal) body.append(el("p", "vtask-goal", String(goal)));
+  if (task.disposition) body.append(dispositionBanner(task));
+  body.append(taskActions(task));
+  if (task.reverted) {
+    const box = el("div", "reverted");
+    box.append(el("div", "sec-title", task.reverted.length ? `Reverted ${task.reverted.length} file${task.reverted.length === 1 ? "" : "s"}` : "Nothing to revert"));
+    const ul = el("ul", "mono-list");
+    for (const path of task.reverted) ul.append(el("li", "", shortPath(path)));
+    if (task.reverted.length) box.append(ul);
+    body.append(box);
+  }
+  if (task.intent) body.append(keyed(contractNode(task.intent.contract, false), `c:${task.id}`, false, remembered));
+  if (task.orch) body.append(graphNode(task, remembered));
+  const attempts = [...task.attempts.values()];
+  attempts.forEach((attempt, i) => body.append(attemptNode(task, attempt, i === attempts.length - 1, remembered)));
+  const rows = task.evidence?.gap_matrix;
+  if (Array.isArray(rows) && rows.length) body.append(gapMatrix(rows));
+  if (task.timeline.length) {
+    const details = keyed(el("details", "vsec"), `tl:${task.id}`, isLatest, remembered);
+    details.append(el("summary", "sec-title", "Timeline"));
+    const ol = el("ol", "timeline");
+    for (const entry of task.timeline) {
+      const li = el("li", entry.kind ? `tl-${entry.kind}` : "");
+      const time = el("time", "", entry.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }));
+      time.dateTime = entry.time.toISOString();
+      li.append(time, el("span", "", entry.text));
+      ol.append(li);
+    }
+    details.append(ol);
+    body.append(details);
+  }
+  section.append(summary, body);
+  return section;
+}
+
+function dispositionBanner(task) {
+  const [tone, label, hint] = DISPOSITIONS[task.disposition] || ["warn", pretty(task.disposition), ""];
+  const banner = el("div", `banner tone-${tone}`);
+  banner.setAttribute("role", "status");
+  banner.append(el("strong", "", label.toUpperCase()));
+  const reasons = Array.isArray(task.evidence?.blocking_reasons) ? task.evidence.blocking_reasons : [];
+  if (reasons.length) {
+    const ul = el("ul");
+    for (const reason of reasons.slice(0, 6)) ul.append(el("li", "", String(reason)));
+    banner.append(ul);
+  } else if (hint) banner.append(el("div", "", hint));
+  return banner;
+}
+
+function taskActions(task) {
+  const row = el("div", "vtask-actions");
+  const id = encodeURIComponent(task.id);
+  const exportBtn = el("button", "btn small", "Export evidence");
+  exportBtn.type = "button";
+  exportBtn.disabled = !task.disposition;
+  exportBtn.title = task.disposition ? "Open the evidence package as Markdown" : "Available after verification";
+  exportBtn.onclick = () => window.open(`/chat/api/tasks/${id}/evidence?format=markdown`, "_blank", "noopener");
+  const revert = el("button", "btn small danger", "Revert task changes");
+  revert.type = "button";
+  revert.disabled = task.checkpoint?.supported === false || task.reverting;
+  revert.title = task.checkpoint?.supported === false ? "No checkpoint: this folder is not a git repository" : "Restore the files this task changed to its checkpoint";
+  revert.onclick = () => revertTask(task);
+  row.append(exportBtn, revert);
+  if (!TERMINAL_TASK.has(task.status)) {
+    const cancel = el("button", "btn small", "Cancel task");
+    cancel.type = "button";
+    cancel.onclick = () => cancelTask(task, cancel);
+    row.append(cancel);
+  }
+  return row;
+}
+
+async function revertTask(task) {
+  if (!confirm("Revert the files this task changed back to its checkpoint? Files the task did not touch stay as they are.")) return;
+  task.reverting = true;
+  scheduleVerify();
+  try {
+    const { reverted } = await api(`/chat/api/tasks/${encodeURIComponent(task.id)}/revert`, { method: "POST" });
+    task.reverted = Array.isArray(reverted) ? reverted.map(String) : [];
+    timeline(task, `Reverted ${task.reverted.length} file${task.reverted.length === 1 ? "" : "s"}`, "warn");
+    status(`Reverted ${task.reverted.length} file${task.reverted.length === 1 ? "" : "s"}.`);
+  } catch (err) {
+    status(`Revert failed: ${err.message}`, true);
+  }
+  task.reverting = false;
+  scheduleVerify();
+}
+
+async function cancelTask(task, button) {
+  button.disabled = true;
+  try {
+    await api(`/chat/api/tasks/${encodeURIComponent(task.id)}/cancel`, { method: "POST" });
+    status("Cancelling task…");
+  } catch (err) {
+    button.disabled = false;
+    status(`Cancel failed: ${err.message}`, true);
+  }
+}
+
+function commandText(command) {
+  if (Array.isArray(command)) return command.map(String).join(" ");
+  return command ? String(command) : "";
+}
+
+function durationText(check) {
+  const ms = check.duration_ms ?? (check.duration_s != null ? check.duration_s * 1000 : null);
+  if (ms == null || !Number.isFinite(Number(ms))) return "";
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+function attemptNode(task, attempt, isLast, remembered) {
+  const details = keyed(el("details", "vsec attempt"), `a:${task.id}:${attempt.n}`, isLast, remembered);
+  const checks = [...attempt.checks.values()];
+  const passed = checks.filter((c) => c.status === "passed").length;
+  const summary = el("summary", "sec-title");
+  summary.append(el("span", "", `Attempt ${attempt.n}${attempt.level ? ` · ${attempt.level}` : ""}`), el("span", "sec-meta", `${passed}/${checks.length} passed`));
+  if (attempt.disposition) {
+    const [tone, label] = DISPOSITIONS[attempt.disposition] || ["warn", pretty(attempt.disposition)];
+    summary.append(pill(tone, label));
+  }
+  details.append(summary);
+  const ul = el("ul", "checks");
+  for (const check of checks) {
+    const st = String(check.status || "running");
+    const li = el("li", `check st-${st}`);
+    const icon = el("span", "check-icon", CHECK_ICONS[st] ?? "?");
+    icon.setAttribute("role", "img");
+    icon.setAttribute("aria-label", st === "running" ? "Running" : pretty(st));
+    const head = el("div", "check-head");
+    head.append(icon, el("span", "check-name", String(check.id)));
+    if (check.kind && check.kind !== check.id) head.append(el("span", "tag", String(check.kind)));
+    if (check.required === false) head.append(el("span", "tag", "advisory"));
+    const meta = [durationText(check), check.exit_code != null ? `exit ${check.exit_code}` : ""].filter(Boolean).join(" · ");
+    if (meta) head.append(el("span", "check-meta", meta));
+    li.append(head);
+    const cmd = commandText(check.command);
+    if (cmd) li.append(el("code", "check-cmd", cmd));
+    if (check.summary && st !== "passed") li.append(el("div", "check-summary", String(check.summary)));
+    const tail = check.output_tail ?? check.output;
+    if (tail) {
+      const out = keyed(el("details", "check-out"), `o:${task.id}:${attempt.n}:${check.id}`, false, remembered);
+      out.append(el("summary", "", "Output"), el("pre", "pre", String(tail)));
+      li.append(out);
+    }
+    ul.append(li);
+  }
+  if (!checks.length) ul.append(el("li", "note", "No checks reported yet."));
+  details.append(ul);
+  return details;
+}
+
+function gapMatrix(rows) {
+  const box = el("div", "vsec gap");
+  box.append(el("div", "sec-title", "Gap matrix"));
+  const wrap = el("div", "gap-wrap");
+  const table = el("table", "gap-table");
+  const head = el("tr");
+  for (const h of ["Requirement", "Evidence", "Status"]) {
+    const th = el("th", "", h);
+    th.scope = "col";
+    head.append(th);
+  }
+  const thead = el("thead");
+  thead.append(head);
+  const tbody = el("tbody");
+  const tones = { covered: "ok", missing: "warn", failed: "bad" };
+  for (const row of rows) {
+    const tr = el("tr");
+    const req = el("td");
+    req.append(el("span", "req-id", `${row.requirement_id ?? ""}${row.kind ? ` · ${String(row.kind).replace(/_/g, " ")}` : ""}`), el("div", "", String(row.text ?? "")));
+    const ev = el("td");
+    const evidence = Array.isArray(row.evidence) ? row.evidence : [];
+    if (evidence.length) {
+      const ul = el("ul");
+      for (const item of evidence) ul.append(el("li", "", String(item)));
+      ev.append(ul);
+    } else ev.append(el("span", "note", "—"));
+    const st = el("td");
+    st.append(pill(tones[row.status] || "muted", pretty(row.status)));
+    tr.append(req, ev, st);
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  wrap.append(table);
+  box.append(wrap);
+  return box;
+}
+
+const NODE_TONES = { completed: "ok", failed: "bad", blocked: "warn", cancelled: "muted", skipped: "muted", running: "run", pending: "muted", ready: "muted" };
+
+function graphNode(task, remembered) {
+  const o = task.orch;
+  const box = el("div", "vsec graph");
+  const title = el("div", "sec-title");
+  title.append(el("span", "", "Task graph"), pill(o.status === "failed" ? "bad" : o.status === "needs_attention" ? "warn" : o.status === "ready_for_verification" ? "ok" : o.status === "cancelled" ? "muted" : "run", pretty(o.status)));
+  box.append(title);
+  if (o.error) box.append(el("div", "banner tone-bad", o.error));
+  // Dependency layers: a node sits one layer below its deepest dependency.
+  const depth = new Map();
+  const depthOf = (id, seen = new Set()) => {
+    if (depth.has(id)) return depth.get(id);
+    const n = o.nodes.get(id);
+    if (!n || seen.has(id)) return 0; // unknown or cyclic dependency: treat as a root
+    seen.add(id);
+    const d = Math.max(-1, ...(n.depends_on || []).map((dep) => depthOf(String(dep), seen))) + 1;
+    depth.set(id, d);
+    return d;
+  };
+  const layers = [];
+  for (const id of o.nodes.keys()) (layers[depthOf(id)] ||= []).push(o.nodes.get(id));
+  layers.forEach((nodes, i) => {
+    const layer = el("div", "graph-layer");
+    layer.append(el("div", "layer-label", `Layer ${i + 1}`));
+    const row = el("div", "layer-nodes");
+    for (const n of nodes) row.append(graphCard(task, n, remembered));
+    layer.append(row);
+    box.append(layer);
+  });
+  if (!o.nodes.size) box.append(el("p", "note", "Planning the task graph…"));
+  if (o.integrating || o.integration) box.append(integrationNode(o));
+  return box;
+}
+
+function graphCard(task, n, remembered) {
+  const card = el("div", `gnode st-${n.status}`);
+  const head = el("div", "gnode-head");
+  head.append(el("span", "gnode-id", n.id));
+  if (n.role) head.append(el("span", "tag", n.role));
+  head.append(pill(NODE_TONES[n.status] || "muted", pretty(n.status)));
+  card.append(head);
+  if (n.objective) card.append(el("p", "gnode-obj", n.objective));
+  const scope = Array.isArray(n.write_scope) ? n.write_scope : [];
+  card.append(el("div", "gnode-meta", scope.length ? `Writes: ${scope.join(", ")}` : "Read-only"));
+  if (n.depends_on?.length) card.append(el("div", "gnode-meta", `After: ${n.depends_on.join(", ")}`));
+  if (n.status === "running" && n.tools?.length) card.append(el("div", "gnode-meta", `Using ${n.tools.slice(-3).join(", ")}`));
+  if (n.error) card.append(el("div", "gnode-err", n.error));
+  if (n.reverted_out_of_scope?.length) card.append(el("div", "gnode-meta warn", `Reverted out of scope: ${n.reverted_out_of_scope.join(", ")}`));
+  if (n.summary) {
+    const details = keyed(el("details", "gnode-sum"), `n:${task.id}:${n.id}`, false, remembered);
+    details.append(el("summary", "", `Summary${n.turns ? ` · ${n.turns} turns` : ""}`), el("div", "gnode-sum-body", n.summary));
+    card.append(details);
+  }
+  return card;
+}
+
+function integrationNode(o) {
+  const box = el("div", "integration");
+  const i = o.integration || {};
+  const title = el("div", "sec-title");
+  const tone = o.integrating ? "run" : i.status === "failed" ? "bad" : i.status === "conflicts" ? "warn" : "ok";
+  title.append(el("span", "", "Integration"), pill(tone, o.integrating ? "Running" : pretty(i.status || "done")));
+  box.append(title);
+  if (i.error) box.append(el("div", "gnode-err", i.error));
+  const line = (label, items) => {
+    if (!items.length) return;
+    const row = el("div", "int-row");
+    const ul = el("ul", "mono-list");
+    for (const item of items) ul.append(el("li", "", item));
+    row.append(el("span", "int-label", label), ul);
+    box.append(row);
+  };
+  const byNode = (map) => Object.entries(map && typeof map === "object" ? map : {}).flatMap(([node, files]) => (Array.isArray(files) ? files : []).map((f) => `${node}: ${f}`));
+  line("Merged", Array.isArray(i.merged) ? i.merged.map(String) : []);
+  line("Reverted out of scope", byNode(i.reverted_out_of_scope));
+  line("Conflicts", byNode(i.conflicts));
+  if (i.final_diff_stat) box.append(el("pre", "pre", String(i.final_diff_stat)));
+  return box;
+}
+
+function wireTasks() {
+  if (!RUN_MODES[state.runMode]) state.runMode = "normal";
+  if (!STRATEGIES[state.strategy]) state.strategy = "balanced";
+  renderRunMode();
+  $("runModeBtn").onclick = () => {
+    if (togglePopover("runModeMenu")) {
+      renderRunModeMenu();
+      $("runModeMenu").querySelector("[aria-checked=true]")?.focus();
+    }
+    syncExpanded();
+  };
+  $("settingsBtn").onclick = () => {
+    if (togglePopover("settingsMenu")) {
+      renderSettings();
+      loadPresets();
+      $("policySelect").focus();
+    }
+    syncExpanded();
+  };
+  $("policySelect").onchange = (e) => {
+    state.policy = e.target.value;
+    store.set("fcc.policy", state.policy);
+    settingsDirty = true;
+    // The preset's permission mode becomes the explicit mode we start with.
+    const mode = presets.list.find((p) => p.id === state.policy)?.permission_mode;
+    if (mode && MODES.some((m) => m.value === mode)) setMode(mode);
+    renderSettings();
+  };
+  for (const [key, id] of BUDGET_FIELDS) {
+    $(id).oninput = (e) => {
+      const v = e.target.value.trim();
+      if (v) state.budget[key] = v;
+      else delete state.budget[key];
+      store.set("fcc.budget", JSON.stringify(state.budget));
+      settingsDirty = true;
+    };
+  }
+  $("verifyBtn").onclick = () => toggleVerify();
+  $("closeVerify").onclick = () => toggleVerify(false);
+  $("healthChip").onclick = () => window.open("/admin", "_blank", "noopener");
+  // After wire()'s outside-click closer and after any menu button toggled a popover.
+  document.addEventListener("mousedown", syncExpanded);
+  document.addEventListener("click", syncExpanded);
+  // Popovers: Escape closes and returns focus; arrows move between items. Capture so the busy-Escape interrupt does not fire.
+  document.addEventListener("keydown", (e) => {
+    const pop = [...document.querySelectorAll(".popover")].find((p) => !p.hidden && p.contains(document.activeElement));
+    if (!pop) return;
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      pop.hidden = true;
+      pop.parentElement.querySelector(":scope > button")?.focus();
+      syncExpanded();
+    } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && document.activeElement.tagName === "BUTTON") {
+      const items = [...pop.querySelectorAll("button:not([disabled])")];
+      const next = items[(items.indexOf(document.activeElement) + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length];
+      e.preventDefault();
+      next?.focus();
+    }
+  }, true);
+}
+
 /* ------------------------------------------------------------- wiring */
 
 function applyTheme(theme) {
@@ -1609,6 +2716,7 @@ function wire() {
     if (!e.target.closest(".menu-anchor")) for (const pop of document.querySelectorAll(".popover")) pop.hidden = true;
     if (mobile.matches && !e.target.closest("#sidebar, #openSidebar")) $("app").classList.add("collapsed");
     if (mobile.matches && !e.target.closest("#changesPanel, #changesBtn")) toggleChanges(false);
+    if (mobile.matches && !e.target.closest("#verifyPanel, #verifyBtn, .task-open")) toggleVerify(false);
   });
   $("sessionList").addEventListener("click", () => { if (mobile.matches) $("app").classList.add("collapsed"); });
   $("collapseSidebar").onclick = () => $("app").classList.add("collapsed");
@@ -1648,6 +2756,7 @@ function wire() {
       interrupt();
     }
   });
+  wireTasks();
   if (mobile.matches) $("app").classList.add("collapsed");
   else if (store.get("fcc.changes", "0") === "1") toggleChanges(true);
   setInterval(refreshSessions, 15000);
@@ -1660,6 +2769,9 @@ async function main() {
   wire();
   renderControls();
   loadModels();
+  loadHealth();
+  // QA hook: drive synthetic SSE events without a backend (localStorage.fccDebug = "1").
+  if (store.get("fccDebug", "0") === "1") window.__fccInject = (ev) => handleEvent(ev);
   await refreshSessions();
   await newChat();
 }

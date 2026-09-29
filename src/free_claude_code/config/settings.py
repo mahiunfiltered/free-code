@@ -724,6 +724,142 @@ class Settings(BaseModel):
         validation_alias="ANTHROPIC_AUTH_TOKEN",
     )
 
+    # ==================== Provider key pools ====================
+    # Plural companions of each provider key (see config/provider_keys.py):
+    # "label1=key1,label2=key2" or a plain comma list.
+    nvidia_nim_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NVIDIA_NIM_API_KEYS"
+    )
+    open_router_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENROUTER_API_KEYS"
+    )
+    groq_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GROQ_API_KEYS"
+    )
+    cline_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CLINE_API_KEYS"
+    )
+    openai_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENAI_API_KEYS"
+    )
+    xai_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="XAI_API_KEYS"
+    )
+    qwencloud_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="QWENCLOUD_API_KEYS"
+    )
+    qwencloud_coding_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="QWENCLOUD_CODING_API_KEYS"
+    )
+    together_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="TOGETHER_API_KEYS"
+    )
+    deepinfra_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="DEEPINFRA_API_KEYS"
+    )
+    siliconflow_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="SILICONFLOW_API_KEYS"
+    )
+    nebius_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NEBIUS_API_KEYS"
+    )
+    chutes_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CHUTES_API_KEYS"
+    )
+    featherless_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="FEATHERLESS_API_KEYS"
+    )
+    agnes_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AGNES_API_KEYS"
+    )
+    zenmux_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="ZENMUX_API_KEYS"
+    )
+    wandb_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="WANDB_API_KEYS"
+    )
+    azure_openai_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AZURE_OPENAI_API_KEYS"
+    )
+    gemini_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GEMINI_API_KEYS"
+    )
+    deepseek_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="DEEPSEEK_API_KEYS"
+    )
+    mistral_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MISTRAL_API_KEYS"
+    )
+    codestral_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CODESTRAL_API_KEYS"
+    )
+    opencode_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENCODE_API_KEYS"
+    )
+    vercel_ai_gateway_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AI_GATEWAY_API_KEYS"
+    )
+    bedrock_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AWS_BEARER_TOKEN_BEDROCKS"
+    )
+    huggingface_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="HUGGINGFACE_API_KEYS"
+    )
+    cohere_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="COHERE_API_KEYS"
+    )
+    github_models_tokens: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GITHUB_MODELS_TOKENS"
+    )
+    wafer_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="WAFER_API_KEYS"
+    )
+    kimi_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KIMI_API_KEYS"
+    )
+    kimi_code_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KIMI_CODE_API_KEYS"
+    )
+    kilo_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KILO_API_KEYS"
+    )
+    minimax_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MINIMAX_API_KEYS"
+    )
+    cerebras_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CEREBRAS_API_KEYS"
+    )
+    sambanova_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="SAMBANOVA_API_KEYS"
+    )
+    fireworks_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="FIREWORKS_API_KEYS"
+    )
+    novita_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NOVITA_API_KEYS"
+    )
+    cloudflare_api_tokens: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CLOUDFLARE_API_TOKENS"
+    )
+    zai_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="ZAI_API_KEYS"
+    )
+    tokenrouter_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="TOKENROUTER_API_KEYS"
+    )
+    nararoute_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NARAROUTE_API_KEYS"
+    )
+    poolside_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="POOLSIDE_API_KEYS"
+    )
+    llm7_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="LLM7_API_KEYS"
+    )
+    ollama_api_keys: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OLLAMA_API_KEYS"
+    )
+
     @field_validator("max_message_log_entries_per_chat", mode="before")
     @classmethod
     def parse_optional_log_cap(cls, v: object) -> object:

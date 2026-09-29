@@ -5,6 +5,8 @@ const state = {
   modelComboboxes: new Set(),
   authPollers: new Map(),
   activeView: "providers",
+  liveTimer: null,
+  poolLabels: new Map(),
 };
 
 const MASKED_SECRET = "********";
@@ -31,6 +33,12 @@ const VIEW_GROUPS = [
     sections: ["messaging", "voice"],
     containerId: "messagingSections",
   },
+  // Live views render from their own APIs; interval views poll while shown.
+  { id: "endpoints", label: "Endpoints", title: "Endpoints", sections: [], refresh: refreshEndpoints, interval: 5000 },
+  { id: "usage", label: "Usage", title: "Usage", sections: [], refresh: refreshUsage },
+  { id: "secrets", label: "Secrets", title: "Secrets", sections: [], refresh: refreshSecrets },
+  { id: "audit", label: "Audit", title: "Audit log", sections: [], refresh: refreshAudit },
+  { id: "policy", label: "Policy", title: "Policy presets", sections: [], refresh: refreshPolicy },
 ];
 
 const byId = (id) => document.getElementById(id);
@@ -77,7 +85,9 @@ async function api(path, options = {}) {
     } catch {
       // The status remains useful when an upstream proxy returns a non-JSON page.
     }
-    throw new Error(detail || `${response.status} ${response.statusText}`);
+    const error = new Error(detail || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -94,6 +104,7 @@ async function load() {
   await refreshConnectedAccounts();
   await hydrateModelOptions();
   await refreshLocalStatus();
+  await loadPoolLabels();
   updateDirtyState();
   showMessage("");
 }
@@ -143,6 +154,7 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+  startLiveView(activeView);
 }
 
 function renderProviders(providerStatus) {
@@ -481,7 +493,7 @@ function updateProviderCheckResult(providerId, status, message) {
 function renderSections(sections, fields) {
   state.modelComboboxes.clear();
   VIEW_GROUPS.forEach((view) => {
-    byId(view.containerId).innerHTML = "";
+    if (view.containerId) byId(view.containerId).innerHTML = "";
   });
 
   const sectionById = new Map(sections.map((section) => [section.id, section]));
@@ -493,6 +505,7 @@ function renderSections(sections, fields) {
   });
 
   VIEW_GROUPS.forEach((view) => {
+    if (!view.containerId) return;
     const container = byId(view.containerId);
     view.sections.forEach((sectionId) => {
       const section = sectionById.get(sectionId);
@@ -590,6 +603,10 @@ function renderField(field) {
     const editor = new ModelListEditor(input, field);
     label.htmlFor = editor.inputId;
     control = editor.element;
+  } else if (isKeyPoolField(field)) {
+    const editor = new KeyPoolEditor(input, field);
+    wrapper.classList.add("key-pool-field");
+    control = editor.element;
   }
   wrapper.append(label, control);
   if (field.secret && field.nullable && field.configured && !field.locked) {
@@ -647,10 +664,10 @@ function inputForField(field) {
     return input;
   }
 
-  if (field.type === "model_list") {
+  if (field.type === "model_list" || isKeyPoolField(field)) {
     const input = document.createElement("input");
     input.type = "hidden";
-    input.value = field.value || "";
+    input.value = field.type === "model_list" ? field.value || "" : "";
     return input;
   }
 
@@ -1174,6 +1191,664 @@ function showMessage(message, kind = "") {
   area.textContent = message;
   area.className = `message-area ${kind}`.trim();
 }
+
+// ---- Key pool editor (plural *_API_KEYS secret fields) ----
+
+const POOL_LABEL = /^[A-Za-z0-9_.-]{1,40}$/;
+const MASKED_KEY = "••••";
+
+function isKeyPoolField(field) {
+  return (
+    field.type === "secret" &&
+    field.key.endsWith("S") &&
+    state.fields.get(field.key.slice(0, -1))?.type === "secret"
+  );
+}
+
+function poolProviderId(fieldKey) {
+  const single = fieldKey.slice(0, -1);
+  const provider = (state.config?.provider_status || []).find((candidate) =>
+    (candidate.configuration_keys || []).includes(single),
+  );
+  return provider?.provider_id || null;
+}
+
+async function loadPoolLabels() {
+  // ponytail: labels come from live endpoint health; the config API never returns key material.
+  try {
+    const result = await api("/admin/api/endpoints");
+    state.poolLabels = new Map();
+    (result.endpoints || []).forEach((endpoint) => {
+      if (!endpoint.configured || endpoint.label === "primary") return;
+      const labels = state.poolLabels.get(endpoint.provider_id) || [];
+      labels.push(endpoint.label);
+      state.poolLabels.set(endpoint.provider_id, labels);
+    });
+  } catch {
+    state.poolLabels = new Map();
+  }
+  document.querySelectorAll(".key-pool-editor").forEach((element) => {
+    element.keyPoolEditor?.renderExisting();
+  });
+}
+
+class KeyPoolEditor {
+  constructor(input, field) {
+    this.input = input;
+    this.field = field;
+    this.providerId = poolProviderId(field.key);
+
+    this.element = el("div", "key-pool-editor");
+    this.element.keyPoolEditor = this;
+    this.element.setAttribute("role", "group");
+    this.element.setAttribute("aria-label", field.label);
+    this.existing = el("div", "key-pool-existing");
+    this.rows = el("div", "key-pool-rows");
+    this.addButton = el("button", "secondary-button", "Add key");
+    this.addButton.type = "button";
+    this.addButton.id = `field-${field.key}-add`;
+    this.addButton.disabled = field.locked;
+    this.addButton.addEventListener("click", () => this.addRow());
+    this.element.append(input, this.existing, this.rows, this.addButton);
+    this.renderExisting();
+  }
+
+  renderExisting() {
+    this.existing.replaceChildren();
+    if (!this.field.configured) return;
+    const labels = state.poolLabels.get(this.providerId) || [];
+    const chips = el("div", "key-pool-chips");
+    (labels.length ? labels : ["configured"]).forEach((label) => {
+      chips.appendChild(el("span", "key-chip", `${label} ${MASKED_KEY}`));
+    });
+    const note = el(
+      "p",
+      "key-pool-note",
+      "Pool configured. Keys added below replace the whole pool; leave empty to keep it.",
+    );
+    this.existing.append(chips, note);
+  }
+
+  addRow() {
+    const row = el("div", "key-pool-row");
+    const index = this.rows.children.length + 1;
+    const label = el("input");
+    label.type = "text";
+    label.placeholder = `key${index}`;
+    label.autocomplete = "off";
+    label.setAttribute("aria-label", `Key ${index} label`);
+    const key = el("input");
+    key.type = "password";
+    key.placeholder = "API key";
+    key.autocomplete = "new-password";
+    key.setAttribute("aria-label", `Key ${index} value`);
+    const remove = el("button", "ghost-button model-list-action", "Remove");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `Remove key ${index}`);
+    remove.addEventListener("click", () => {
+      row.remove();
+      this.sync();
+    });
+    label.addEventListener("input", () => this.sync());
+    key.addEventListener("input", () => this.sync());
+    row.append(label, key, remove);
+    this.rows.appendChild(row);
+    label.focus();
+  }
+
+  sync() {
+    const entries = [];
+    this.rows.querySelectorAll(".key-pool-row").forEach((row) => {
+      const [labelInput, keyInput] = row.querySelectorAll("input");
+      const label = labelInput.value.trim();
+      const key = keyInput.value.trim();
+      const labelOk = !label || POOL_LABEL.test(label);
+      const keyOk = !/[,\s]/.test(key);
+      labelInput.setAttribute("aria-invalid", String(!labelOk));
+      keyInput.setAttribute("aria-invalid", String(!keyOk));
+      if (!key || !labelOk || !keyOk) return;
+      entries.push(label ? `${label}=${key}` : key);
+    });
+    this.input.value = entries.join(",");
+    this.input.dataset.remove = "false";
+    this.input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+// ---- Shared live-view helpers ----
+
+function el(tag, className = "", text = "") {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== "") node.textContent = text;
+  return node;
+}
+
+function pill(text, kind = "") {
+  return el("span", `status-pill ${kind}`.trim(), text);
+}
+
+function dataTable(headers, rows) {
+  const wrap = el("div", "table-wrap");
+  const table = el("table", "data-table");
+  const head = el("tr");
+  headers.forEach((header) => head.appendChild(el("th", "", header)));
+  table.appendChild(el("thead")).appendChild(head);
+  const body = table.appendChild(el("tbody"));
+  rows.forEach((cells) => {
+    const tr = body.appendChild(el("tr"));
+    cells.forEach((cell, index) => {
+      const td = el("td");
+      td.dataset.label = headers[index];
+      if (cell instanceof Node) td.appendChild(cell);
+      else td.textContent = cell ?? "—";
+      tr.appendChild(td);
+    });
+  });
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function panel(title, description = "") {
+  const section = el("section", "settings-section");
+  const heading = el("div", "section-heading");
+  const text = el("div");
+  text.appendChild(el("h3", "", title));
+  if (description) text.appendChild(el("p", "", description));
+  heading.appendChild(text);
+  section.appendChild(heading);
+  return section;
+}
+
+function emptyState(message) {
+  return el("div", "empty-state", message);
+}
+
+function unavailable(container, error, feature) {
+  const missing = error.status === 404 || error.status === 503;
+  container.replaceChildren(
+    emptyState(
+      missing
+        ? `${feature} is not available on this server yet. Restart fcc-server after updating to enable it.`
+        : `${feature} could not be loaded: ${error.message}`,
+    ),
+  );
+}
+
+function formatMs(value) {
+  return value === null || value === undefined ? "—" : `${Math.round(value)} ms`;
+}
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function formatTime(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const date = new Date(typeof value === "number" ? value * 1000 : value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.ceil(seconds));
+  if (total >= 3600) return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m`;
+  if (total >= 60) return `${Math.floor(total / 60)}m ${total % 60}s`;
+  return `${total}s`;
+}
+
+function startLiveView(view) {
+  window.clearInterval(state.liveTimer);
+  state.liveTimer = null;
+  if (!view.refresh) return;
+  view.refresh();
+  if (view.interval) {
+    state.liveTimer = window.setInterval(() => {
+      if (!document.hidden) view.refresh();
+    }, view.interval);
+  }
+}
+
+function tickCountdowns() {
+  document.querySelectorAll("[data-deadline]").forEach((node) => {
+    const remaining = (Number(node.dataset.deadline) - Date.now()) / 1000;
+    node.textContent = remaining > 0 ? formatDuration(remaining) : "ready";
+  });
+}
+
+// ---- Endpoints view ----
+
+const CIRCUIT_CLASS = { HEALTHY: "ok", DEGRADED: "warn", OPEN: "error", HALF_OPEN: "info" };
+
+async function refreshEndpoints() {
+  const body = byId("endpointsBody");
+  let result;
+  try {
+    result = await api("/admin/api/endpoints");
+  } catch (error) {
+    unavailable(body, error, "Endpoint health");
+    return;
+  }
+  const endpoints = result.endpoints || [];
+  byId("endpointsUpdated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+  if (!endpoints.length) {
+    body.replaceChildren(
+      emptyState("No provider keys are registered yet. Configure a key-based provider to see its health."),
+    );
+    return;
+  }
+  const byProvider = new Map();
+  endpoints.forEach((endpoint) => {
+    if (!byProvider.has(endpoint.provider_id)) byProvider.set(endpoint.provider_id, []);
+    byProvider.get(endpoint.provider_id).push(endpoint);
+  });
+  const sections = [];
+  byProvider.forEach((items, providerId) => {
+    const healthy = items.filter((item) => item.circuit === "HEALTHY").length;
+    const section = panel(providerDisplayName(providerId), `${healthy} of ${items.length} keys healthy`);
+    section.dataset.endpointProvider = providerId;
+    section.appendChild(
+      dataTable(
+        ["Key", "State", "Cooldown", "p50 / p95", "OK / Failed", "Last error", "Action"],
+        items.map(endpointRow),
+      ),
+    );
+    sections.push(section);
+  });
+  body.replaceChildren(...sections);
+}
+
+function endpointRow(item) {
+  const key = el("span", "mono", item.label);
+  if (item.configured === false) key.appendChild(el("span", "muted-tag", " not configured"));
+
+  const statePill = pill(item.circuit.replace("_", " "), CIRCUIT_CLASS[item.circuit] || "");
+  statePill.dataset.circuit = item.circuit;
+
+  let cooldown = "—";
+  if (item.cooldown_remaining_s > 0) {
+    cooldown = el("span", "cooldown");
+    const timer = el("span", "mono", formatDuration(item.cooldown_remaining_s));
+    timer.dataset.deadline = String(Date.now() + item.cooldown_remaining_s * 1000);
+    cooldown.append(timer);
+    if (item.cooldown_reason) cooldown.append(el("span", "muted-tag", ` ${item.cooldown_reason}`));
+  } else if (item.manual_reset_required) {
+    cooldown = el("span", "muted-tag", "until reset");
+  }
+
+  const lastError = el("span", "last-error", item.last_error || "—");
+  const recent = item.recent_errors || [];
+  if (recent.length) {
+    lastError.title = recent.map((entry) => `${formatTime(entry.at)} ${entry.signal}`).join("\n");
+  }
+
+  const reset = el("button", "secondary-button compact-button", "Reset");
+  reset.type = "button";
+  reset.disabled = !(item.circuit === "OPEN" || item.manual_reset_required);
+  reset.setAttribute("aria-label", `Reset ${item.provider_id} ${item.label}`);
+  reset.addEventListener("click", () => resetEndpoint(item, reset));
+
+  return [
+    key,
+    statePill,
+    cooldown,
+    `${formatMs(item.latency_p50_ms)} / ${formatMs(item.latency_p95_ms)}`,
+    `${formatCount(item.success_count)} / ${formatCount(item.failure_count)}`,
+    lastError,
+    reset,
+  ];
+}
+
+async function resetEndpoint(item, button) {
+  button.disabled = true;
+  try {
+    await api(
+      `/admin/api/endpoints/${encodeURIComponent(item.provider_id)}/${encodeURIComponent(item.label)}/reset`,
+      { method: "POST", body: "{}" },
+    );
+    showMessage(`Reset ${item.provider_id} ${item.label}`, "ok");
+  } catch (error) {
+    showMessage(`Could not reset ${item.label}: ${error.message}`, "error");
+  }
+  await refreshEndpoints();
+}
+
+// ---- Usage view ----
+
+function outcomeClass(outcome) {
+  if (outcome === "ok") return "ok";
+  if (outcome === "rate_limited" || outcome === "quota_exhausted") return "warn";
+  if (outcome === "cancelled") return "";
+  return "error";
+}
+
+async function refreshUsage() {
+  const body = byId("usageBody");
+  const minutes = byId("usageWindow").value;
+  let result;
+  try {
+    result = await api(`/admin/api/usage?minutes=${encodeURIComponent(minutes)}`);
+  } catch (error) {
+    unavailable(body, error, "Usage");
+    return;
+  }
+  const endpoints = result.endpoints || [];
+  const sessions = result.sessions || [];
+  const recent = result.recent || [];
+  const maxRequests = Math.max(1, ...endpoints.map((item) => item.requests || 0));
+
+  const endpointPanel = panel("Endpoints", "Attempts per provider key in the selected window.");
+  endpointPanel.appendChild(
+    endpoints.length
+      ? dataTable(
+          ["Key", "Requests", "OK", "Errors", "Rate limits", "p50 / p95", "Tokens in / out"],
+          endpoints.map((item) => {
+            const requests = el("span", "spark");
+            const bar = el("span", "spark-bar");
+            bar.style.width = `${Math.max(2, (100 * (item.requests || 0)) / maxRequests)}%`;
+            const track = el("span", "spark-track");
+            track.appendChild(bar);
+            requests.append(track, el("span", "spark-value", formatCount(item.requests)));
+            return [
+              el("span", "mono", `${providerDisplayName(item.provider_id)} / ${item.label}`),
+              requests,
+              formatCount(item.ok),
+              formatCount(item.errors),
+              formatCount(item.rate_limits),
+              `${formatMs(item.latency_p50_ms)} / ${formatMs(item.latency_p95_ms)}`,
+              `${formatCount(item.input_tokens)} / ${formatCount(item.output_tokens)}`,
+            ];
+          }),
+        )
+      : emptyState("No attempts in this window."),
+  );
+
+  const sessionPanel = panel("Sessions", "Totals per Claude Code session.");
+  sessionPanel.appendChild(
+    sessions.length
+      ? dataTable(
+          ["Session", "Attempts", "OK", "Tokens in / out", "Last activity"],
+          sessions.map((item) => {
+            const id = el("span", "mono", String(item.claude_session_id).slice(0, 8));
+            id.title = item.claude_session_id;
+            return [
+              id,
+              formatCount(item.attempts),
+              formatCount(item.ok),
+              `${formatCount(item.input_tokens)} / ${formatCount(item.output_tokens)}`,
+              formatTime(item.last_ts),
+            ];
+          }),
+        )
+      : emptyState("No session activity in this window."),
+  );
+
+  const recentPanel = panel("Recent attempts", "Latest attempts, newest first.");
+  recentPanel.appendChild(
+    recent.length
+      ? dataTable(
+          ["Time", "Key", "Model", "Outcome", "Latency", "Tokens in / out"],
+          recent.map((item) => {
+            const key = el("span", "mono", `${item.provider_id} / ${item.key_label}`);
+            if (item.failover_from) {
+              key.appendChild(el("span", "failover", `↪ from ${item.failover_from}`));
+            }
+            return [
+              formatTime(item.ts),
+              key,
+              el("span", "mono", item.model || "—"),
+              pill(item.outcome, outcomeClass(item.outcome)),
+              formatMs(item.latency_ms),
+              `${formatCount(item.input_tokens)} / ${formatCount(item.output_tokens)}`,
+            ];
+          }),
+        )
+      : emptyState("No attempts recorded yet."),
+  );
+  body.replaceChildren(endpointPanel, sessionPanel, recentPanel);
+}
+
+// ---- Secrets view ----
+
+function setSecretsEnabled(enabled) {
+  ["secretName", "secretValue", "secretSave", "secretMigrate"].forEach((id) => {
+    byId(id).disabled = !enabled;
+  });
+}
+
+async function refreshSecrets() {
+  const status = byId("vaultStatus");
+  const errorBox = byId("vaultError");
+  const list = byId("secretList");
+  let result;
+  try {
+    result = await api("/admin/api/secrets");
+  } catch (error) {
+    status.className = "status-pill warn";
+    status.textContent = "Unavailable";
+    errorBox.hidden = true;
+    setSecretsEnabled(false);
+    unavailable(list, error, "The credential vault");
+    return;
+  }
+  const available = Boolean(result.available);
+  status.className = `status-pill ${available ? "ok" : "error"}`;
+  status.textContent = available ? "Available" : "Unavailable";
+  const errorText = result.error || (available ? "" : "The vault is not available on this machine.");
+  errorBox.textContent = errorText;
+  errorBox.hidden = !errorText;
+  setSecretsEnabled(available);
+
+  const names = result.names || [];
+  if (!names.length) {
+    list.replaceChildren(emptyState("No secrets stored."));
+    return;
+  }
+  list.replaceChildren(
+    ...names.map((name) => {
+      const row = el("div", "secret-row");
+      row.dataset.secret = name;
+      const remove = el("button", "ghost-button compact-button", "Delete");
+      remove.type = "button";
+      remove.disabled = !available;
+      remove.setAttribute("aria-label", `Delete secret ${name}`);
+      remove.addEventListener("click", () => deleteSecret(name));
+      row.append(el("span", "mono", name), el("code", "secret-ref", `vault:${name}`), remove);
+      return row;
+    }),
+  );
+}
+
+async function saveSecret(event) {
+  event.preventDefault();
+  const name = byId("secretName").value.trim();
+  const value = byId("secretValue").value;
+  if (!name || !value) {
+    showMessage("Enter a secret name and value.", "error");
+    return;
+  }
+  try {
+    await api(`/admin/api/secrets/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    });
+    byId("secretName").value = "";
+    byId("secretValue").value = "";
+    showMessage(`Saved secret ${name}. Reference it as vault:${name}.`, "ok");
+  } catch (error) {
+    showMessage(`Could not save secret: ${error.message}`, "error");
+  }
+  await refreshSecrets();
+}
+
+async function deleteSecret(name) {
+  if (!window.confirm(`Delete secret "${name}"? Any vault:${name} reference will stop resolving.`)) return;
+  try {
+    await api(`/admin/api/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
+    showMessage(`Deleted secret ${name}.`, "ok");
+  } catch (error) {
+    showMessage(`Could not delete secret: ${error.message}`, "error");
+  }
+  await refreshSecrets();
+}
+
+async function migrateSecrets() {
+  if (!window.confirm("Move plaintext API keys from .env into the vault? A backup of .env is written first.")) {
+    return;
+  }
+  const box = byId("migrateResult");
+  try {
+    const result = await api("/admin/api/secrets/migrate", { method: "POST", body: "{}" });
+    const migrated = result.migrated || [];
+    box.className = "notice warn";
+    box.replaceChildren(
+      el(
+        "p",
+        "",
+        migrated.length ? `Moved into the vault: ${migrated.join(", ")}.` : "No plaintext keys needed moving.",
+      ),
+    );
+    if (result.backup) {
+      const backup = el("p", "", "Backup of the old .env: ");
+      backup.appendChild(el("code", "", result.backup));
+      box.append(
+        backup,
+        el("p", "", "It still contains the plaintext keys. Delete it once the server starts cleanly."),
+      );
+    }
+    box.hidden = false;
+    showMessage("Keys moved. Restart fcc-server to use the vault references.", "ok");
+  } catch (error) {
+    showMessage(`Could not move keys: ${error.message}`, "error");
+  }
+  await refreshSecrets();
+}
+
+// ---- Audit view ----
+
+async function refreshAudit(event) {
+  event?.preventDefault?.();
+  const body = byId("auditBody");
+  const badge = byId("auditIntegrity");
+  const params = new URLSearchParams({ limit: "100" });
+  const action = byId("auditAction").value.trim();
+  const actor = byId("auditActor").value.trim();
+  if (action) params.set("action", action);
+  if (actor) params.set("actor", actor);
+  let result;
+  try {
+    result = await api(`/admin/api/audit?${params}`);
+  } catch (error) {
+    badge.className = "status-pill warn";
+    badge.textContent = "Unavailable";
+    unavailable(body, error, "The audit log");
+    return;
+  }
+  badge.className = `status-pill ${result.verified ? "ok" : "error"}`;
+  badge.textContent = result.verified
+    ? "Chain verified ✓"
+    : `Tampered at id ${result.first_bad_id ?? "?"} ✗`;
+  const records = result.records || [];
+  const recordsPanel = panel(
+    "Records",
+    "Append-only, hash-chained log of permission, config, secret and verification events.",
+  );
+  recordsPanel.appendChild(
+    records.length
+      ? dataTable(
+          ["Time", "Actor", "Action", "Resource", "Decision", "Outcome"],
+          records.map((record) => [
+            formatTime(record.ts),
+            record.actor,
+            el("span", "mono", record.action || "—"),
+            el("span", "mono", record.resource || "—"),
+            record.decision || "—",
+            record.outcome || "—",
+          ]),
+        )
+      : emptyState("No audit records match."),
+  );
+  body.replaceChildren(recordsPanel);
+}
+
+// ---- Policy view ----
+
+const MODE_TEXT = {
+  default: "Claude asks before each tool that is not allowed below.",
+  acceptEdits: "File edits run without a prompt; other tools ask unless allowed below.",
+  dontAsk: "Only allowed tools run; anything else is refused without a prompt.",
+  bypassPermissions: "Everything runs without a prompt, except the ask and deny rules below.",
+  plan: "Read-only planning; nothing is changed.",
+};
+const RULE_LINE = /^(ALLOW|ASK|DENY)\s+(.+?)(?:\s+-\s+(.*))?$/i;
+
+function parseRule(rule) {
+  if (rule && typeof rule === "object") {
+    return {
+      decision: String(rule.decision || "").toLowerCase(),
+      rule: String(rule.rule || ""),
+      reason: rule.reason || "",
+    };
+  }
+  const match = RULE_LINE.exec(String(rule).trim());
+  return match
+    ? { decision: match[1].toLowerCase(), rule: match[2], reason: match[3] || "" }
+    : { decision: "other", rule: String(rule), reason: "" };
+}
+
+async function refreshPolicy() {
+  const body = byId("policyBody");
+  let result;
+  try {
+    result = await api("/admin/api/policy/presets");
+  } catch (error) {
+    unavailable(body, error, "Policy presets");
+    return;
+  }
+  const presets = result.presets || [];
+  if (!presets.length) {
+    body.replaceChildren(emptyState("No policy presets are defined."));
+    return;
+  }
+  body.replaceChildren(
+    ...presets.map((preset) => {
+      const card = el("article", "provider-card policy-card");
+      card.dataset.preset = preset.id;
+      const title = el("div", "provider-title");
+      title.append(el("strong", "", preset.id), pill(preset.permission_mode || "default", "info"));
+      card.append(title, el("p", "policy-mode", MODE_TEXT[preset.permission_mode] || ""));
+      const groups = { deny: [], ask: [], allow: [], other: [] };
+      (preset.rules || []).map(parseRule).forEach((rule) => {
+        (groups[rule.decision] || groups.other).push(rule);
+      });
+      [
+        ["deny", "Denies"],
+        ["ask", "Asks first"],
+        ["allow", "Allows"],
+        ["other", "Other"],
+      ].forEach(([key, label]) => {
+        if (!groups[key].length) return;
+        const details = el("details", `policy-group ${key}`);
+        details.open = key !== "other";
+        details.appendChild(el("summary", "", `${label} (${groups[key].length})`));
+        const list = details.appendChild(el("ul"));
+        groups[key].forEach((rule) => {
+          const item = list.appendChild(el("li"));
+          item.appendChild(el("code", "", rule.rule));
+          if (rule.reason) item.appendChild(el("span", "muted-tag", ` ${rule.reason}`));
+        });
+        card.appendChild(details);
+      });
+      return card;
+    }),
+  );
+}
+
+byId("usageWindow").addEventListener("change", refreshUsage);
+byId("usageRefresh").addEventListener("click", refreshUsage);
+byId("secretForm").addEventListener("submit", saveSecret);
+byId("secretMigrate").addEventListener("click", migrateSecrets);
+byId("auditFilters").addEventListener("submit", refreshAudit);
+window.setInterval(tickCountdowns, 1000);
 
 byId("applyButton").addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {

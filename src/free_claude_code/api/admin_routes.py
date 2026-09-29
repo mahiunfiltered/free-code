@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -27,7 +27,7 @@ from free_claude_code.config.provider_catalog import (
 from free_claude_code.core.json_types import JsonObject, JsonValue
 
 from .dependencies import get_services
-from .ports import ApiServices
+from .ports import ApiServices, EndpointPoolPort, WorkbenchPort
 
 router = APIRouter()
 
@@ -46,6 +46,12 @@ class AdminConfigPayload(BaseModel):
     """Partial config update submitted by the admin UI."""
 
     values: JsonObject = Field(default_factory=dict)
+
+
+class SecretPayload(BaseModel):
+    """A vault secret value; accepted only in the request body, never echoed."""
+
+    value: str = Field(min_length=1, max_length=16_384)
 
 
 class ConnectedAccountLoginPayload(BaseModel):
@@ -231,6 +237,108 @@ async def refresh_models(
     require_loopback_admin(request)
     result = await services.admin.refresh_models()
     return _model_options(services, refresh_result=result)
+
+
+def _endpoint_pool(services: ApiServices) -> EndpointPoolPort:
+    if services.endpoints is None:
+        raise HTTPException(status_code=503, detail="Endpoint pool is not enabled.")
+    return services.endpoints
+
+
+@router.get("/admin/api/endpoints")
+async def endpoint_health(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return _no_store(_endpoint_pool(services).endpoint_health())
+
+
+@router.post("/admin/api/endpoints/{provider_id}/{label}/reset")
+async def reset_endpoint(
+    provider_id: str,
+    label: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    if not _endpoint_pool(services).reset_endpoint(provider_id, label):
+        raise HTTPException(status_code=404, detail="Unknown provider key endpoint.")
+    return _no_store({"provider_id": provider_id, "label": label, "reset": True})
+
+
+@router.get("/admin/api/usage")
+async def usage_summary(
+    request: Request,
+    minutes: float = Query(default=60.0, gt=0, le=60 * 24 * 31),
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return _no_store(_endpoint_pool(services).usage_summary(minutes))
+
+
+def _workbench(services: ApiServices) -> WorkbenchPort:
+    if services.workbench is None:
+        raise HTTPException(status_code=503, detail="Workbench is not available.")
+    return services.workbench
+
+
+@router.get("/admin/api/secrets")
+async def list_secrets(request: Request, services: ApiServices = Depends(get_services)):
+    require_loopback_admin(request)
+    return _no_store(_workbench(services).list_secrets())
+
+
+@router.put("/admin/api/secrets/{name}")
+async def set_secret(
+    name: str,
+    payload: SecretPayload,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    _workbench(services).set_secret(name, payload.value)
+    return _no_store({"ok": True})
+
+
+@router.delete("/admin/api/secrets/{name}")
+async def delete_secret(
+    name: str, request: Request, services: ApiServices = Depends(get_services)
+):
+    require_loopback_admin(request)
+    if not _workbench(services).delete_secret(name):
+        raise HTTPException(status_code=404, detail="Unknown secret.")
+    return _no_store({"ok": True})
+
+
+@router.post("/admin/api/secrets/migrate")
+async def migrate_secrets(
+    request: Request, services: ApiServices = Depends(get_services)
+):
+    require_loopback_admin(request)
+    return _no_store(_workbench(services).migrate_secrets())
+
+
+@router.get("/admin/api/audit")
+async def audit_log(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=1000),
+    action: str = "",
+    actor: str = "",
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return _no_store(
+        _workbench(services).audit_records(limit=limit, action=action, actor=actor)
+    )
+
+
+@router.get("/admin/api/policy/presets")
+async def admin_policy_presets(
+    request: Request, services: ApiServices = Depends(get_services)
+):
+    require_loopback_admin(request)
+    return {"presets": list(_workbench(services).policy_presets())}
 
 
 def _model_options(

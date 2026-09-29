@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Canonical managed-config loading, precedence, provenance, and caching."""
 
 import os
@@ -9,8 +7,16 @@ from enum import StrEnum
 from functools import lru_cache
 from types import MappingProxyType
 
+from free_claude_code.core.diagnostics import register_secret_value
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
+from free_claude_code.core.vault import (
+    SecretNotFound,
+    Vault,
+    VaultError,
+    platform_protector,
+)
 
+from . import paths
 from .env_files import ANTHROPIC_AUTH_TOKEN_ENV, dotenv_values_from_file
 from .env_migrations import (
     atomic_write_managed_config,
@@ -20,6 +26,58 @@ from .env_migrations import (
 from .paths import config_lock_path, managed_env_path
 from .provider_proxies import invalid_provider_proxy_keys
 from .settings import Settings
+
+VAULT_REF_PREFIX = "vault:"
+VAULT_FILENAME = "vault.bin"
+VAULT_KEY_FILENAME = "vault.key"
+
+
+class VaultReferenceError(ValueError):
+    """A ``vault:<name>`` setting could not be resolved (never carries the value)."""
+
+
+def managed_vault() -> Vault:
+    """Open the per-user credential vault in the FCC config directory."""
+
+    directory = paths.config_dir_path()
+    return Vault(
+        directory / VAULT_FILENAME, platform_protector(directory / VAULT_KEY_FILENAME)
+    )
+
+
+def resolve_vault_refs(values: Mapping[str, str]) -> dict[str, str]:
+    """Replace ``vault:<name>`` values with vault secrets; other values pass through."""
+
+    refs = {
+        key: value.strip()[len(VAULT_REF_PREFIX) :].strip()
+        for key, value in values.items()
+        if value.strip().startswith(VAULT_REF_PREFIX)
+    }
+    if not refs:
+        return dict(values)
+    resolved = dict(values)
+    try:
+        vault = managed_vault()
+    except VaultError as exc:
+        raise VaultReferenceError(
+            f"Settings {', '.join(sorted(refs))} use vault references but the "
+            f"vault is unavailable: {exc}"
+        ) from None
+    for key, name in refs.items():
+        try:
+            resolved[key] = vault.get(name)
+            register_secret_value(resolved[key])
+        except SecretNotFound:
+            raise VaultReferenceError(
+                f"Setting {key} references missing vault secret {name!r}. "
+                f"Add it with: fcc-secret set {name}"
+            ) from None
+        except (VaultError, ValueError) as exc:
+            raise VaultReferenceError(
+                f"Setting {key} references vault secret {name!r} but the vault "
+                f"could not be read: {exc}"
+            ) from None
+    return resolved
 
 
 class ConfigSource(StrEnum):
@@ -125,7 +183,7 @@ def compose_settings_snapshot(
         if name := aliases.get(key):
             sources[name] = ConfigSource.PROCESS
 
-    settings = Settings.model_validate(values)
+    settings = Settings.model_validate(resolve_vault_refs(values))
     return SettingsSnapshot(
         settings=settings,
         sources=MappingProxyType(sources),

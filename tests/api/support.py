@@ -58,6 +58,7 @@ def create_test_app(
             admin=runtime,
             tasks=runtime,
             chat=runtime.chat_sessions,
+            workbench=runtime.workbench,
         )
     )
 

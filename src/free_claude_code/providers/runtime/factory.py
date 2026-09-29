@@ -3,15 +3,21 @@ from __future__ import annotations
 """Provider construction from declarative profiles and exceptional adapters."""
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 
 from free_claude_code.application.errors import (
     ApplicationUnavailableError,
     UnknownProviderError,
 )
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.provider_keys import provider_keys
 from free_claude_code.config.settings import Settings
-from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.admission import (
+    UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
+    ProviderAdmissionController,
+)
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
+from free_claude_code.providers.key_pool import EndpointPool, PooledProvider, PoolMember
 from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     create_openai_chat_provider,
@@ -213,25 +219,56 @@ def create_provider(
     settings: Settings,
     *,
     injected_factories: Mapping[str, ProviderFactory] | None = None,
+    endpoint_pool: EndpointPool | None = None,
 ) -> BaseProvider:
-    """Create a provider instance for a supported provider id."""
+    """Create a provider instance for a supported provider id.
+
+    With an ``endpoint_pool``, key-based providers become a :class:`PooledProvider`
+    with one inner client per configured key (health, failover, usage rows).
+    """
     descriptor = PROVIDER_CATALOG.get(provider_id)
     if descriptor is None:
         raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
 
     config = build_provider_config(descriptor, settings)
-    admission = ProviderAdmissionController(
-        provider_name=provider_id,
-        rate_limit=config.rate_limit,
-        rate_window=config.rate_window,
-        max_concurrency=config.max_concurrency,
-    )
     factory = (injected_factories or {}).get(provider_id)
     if provider_id in _INJECTED_PROVIDER_IDS and factory is None:
         raise ApplicationUnavailableError(
             f"Provider {provider_id!r} is unavailable in this runtime."
         )
     factory = factory or _SPECIAL_PROVIDER_FACTORIES.get(provider_id)
-    if factory is not None:
-        return factory(config, settings, admission)
-    return create_openai_chat_provider(provider_id, config, admission)
+
+    def build(
+        member_config: ProviderConfig, name: str, max_attempts: int
+    ) -> BaseProvider:
+        admission = ProviderAdmissionController(
+            provider_name=name,
+            rate_limit=member_config.rate_limit,
+            rate_window=member_config.rate_window,
+            max_concurrency=member_config.max_concurrency,
+            max_attempts=max_attempts,
+        )
+        if factory is not None:
+            return factory(member_config, settings, admission)
+        return create_openai_chat_provider(provider_id, member_config, admission)
+
+    keys = provider_keys(descriptor, settings) if descriptor.credential_attr else ()
+    if endpoint_pool is None or not keys:
+        return build(config, provider_id, UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS)
+    # ponytail: with several keys the pool owns retries (fail over instead of
+    # backing off on a limited key), so each key client makes one attempt.
+    per_key_attempts = 1 if len(keys) > 1 else UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
+    members = [
+        PoolMember(
+            key=key,
+            provider=build(
+                replace(config, api_key=key.key),
+                f"{provider_id}[{key.label}]",
+                per_key_attempts,
+            ),
+        )
+        for key in keys
+    ]
+    return PooledProvider(
+        config, provider_id=provider_id, members=members, pool=endpoint_pool
+    )

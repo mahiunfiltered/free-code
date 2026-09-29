@@ -17,7 +17,11 @@ ALLOWED_PACKAGE_DEPENDENCIES: dict[str, set[str]] = {
     "messaging": {"core"},
     "providers": {"application", "config", "core"},
     "api": {"application", "config", "core"},
-    "cli": {"config", "core"},
+    "cli": {"application", "config", "core"},
+    # Verified-execution features ported from M0005 (intent, verification,
+    # recovery, checkpoints, policy, orchestration, memory, benchmarks).
+    "workbench": {"application", "cli", "config", "core"},
+    "orchestrator": {"core", "runtime"},
     "runtime": {
         "api",
         "application",
@@ -26,6 +30,7 @@ ALLOWED_PACKAGE_DEPENDENCIES: dict[str, set[str]] = {
         "core",
         "messaging",
         "providers",
+        "workbench",
     },
 }
 

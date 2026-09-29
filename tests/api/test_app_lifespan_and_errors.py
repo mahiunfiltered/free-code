@@ -14,6 +14,7 @@ from free_claude_code.application.errors import (
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
+from free_claude_code.providers.key_pool import PooledProvider
 from free_claude_code.providers.nvidia_nim.client import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.voice import NvidiaNimTranscriber
 from free_claude_code.runtime.application import (
@@ -382,8 +383,12 @@ async def test_bootstrap_constructs_isolated_runtime_resource_graphs() -> None:
     first_lease = await first.runtime.provider_manager.acquire()
     second_lease = await second.runtime.provider_manager.acquire()
     try:
-        first_provider = first_lease.resolve_provider("nvidia_nim")
-        second_provider = second_lease.resolve_provider("nvidia_nim")
+        first_pooled = first_lease.resolve_provider("nvidia_nim")
+        second_pooled = second_lease.resolve_provider("nvidia_nim")
+        assert isinstance(first_pooled, PooledProvider)
+        assert isinstance(second_pooled, PooledProvider)
+        first_provider = first_pooled.members[0].provider
+        second_provider = second_pooled.members[0].provider
 
         assert isinstance(first_provider, NvidiaNimProvider)
         assert isinstance(second_provider, NvidiaNimProvider)

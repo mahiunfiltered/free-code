@@ -11,6 +11,7 @@ import pytest
 from free_claude_code.cli.managed import interactive, transcripts
 from free_claude_code.cli.managed.interactive import (
     MAX_REPLAY_EVENTS,
+    ChatBudget,
     ChatSessionError,
     InteractiveClaudeSession,
     InteractiveClaudeSessions,
@@ -120,6 +121,7 @@ async def test_full_turn_with_permission_prompt_and_controls(tmp_path: Path):
             events, lambda e: e.get("type") == "fcc_permission_resolved"
         )
         assert resolved["behavior"] == "allow"
+        assert resolved["tool_name"] == "Write"
         text = await _next(events, lambda e: e.get("type") == "assistant")
         assert text["message"]["content"][0]["text"] == "decision=allow"
         await _next(events, lambda e: e.get("type") == "result")
@@ -468,3 +470,198 @@ def test_argv_pins_workspace_folder_in_system_prompt(tmp_path: Path):
     prompt = argv[argv.index("--append-system-prompt") + 1]
     assert str(tmp_path) in prompt
     assert ("Windows" in prompt) == (os.name == "nt")
+
+
+# ----- policy, budgets, observers ---------------------------------------------
+
+CODER = Path(__file__).resolve().parents[1] / "workbench" / "fake_claude_coder.py"
+
+
+def _coder_registry(tmp_path: Path, **kwargs) -> InteractiveClaudeSessions:
+    if os.name == "nt":
+        wrapper = tmp_path / "coder.bat"
+        wrapper.write_text(f'@"{sys.executable}" "{CODER}" %*\r\n', encoding="utf-8")
+    else:
+        wrapper = tmp_path / "coder"
+        wrapper.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{CODER}" "$@"\n', encoding="utf-8"
+        )
+        wrapper.chmod(0o755)
+    return InteractiveClaudeSessions(
+        proxy_target=lambda: ("http://127.0.0.1:1", "token"),
+        claude_bin=str(wrapper),
+        **kwargs,
+    )
+
+
+def test_argv_carries_settings_max_turns_and_extra_system_prompt():
+    argv = build_interactive_claude_argv(
+        claude_bin="claude",
+        permission_mode="acceptEdits",
+        model=None,
+        resume_session_id=None,
+        cwd="/work",
+        settings_json='{"permissions":{}}',
+        max_turns=7,
+        extra_system_prompt="EXTRA RULES",
+    )
+    assert argv[argv.index("--settings") + 1] == '{"permissions":{}}'
+    assert argv[argv.index("--max-turns") + 1] == "7"
+    system = argv[argv.index("--append-system-prompt") + 1]
+    assert "/work" in system and system.endswith("EXTRA RULES")
+    assert argv.count("--append-system-prompt") == 1
+    only_extra = build_interactive_claude_argv(
+        claude_bin="claude",
+        permission_mode="default",
+        model=None,
+        resume_session_id=None,
+        extra_system_prompt="X",
+    )
+    assert only_extra[only_extra.index("--append-system-prompt") + 1] == "X"
+    assert "--settings" not in only_extra and "--max-turns" not in only_extra
+
+
+def test_chat_budget_parsing():
+    assert ChatBudget.from_json(None) is None
+    assert ChatBudget.from_json({}) is None
+    assert ChatBudget.from_json({"max_turns": None}) is None
+    budget = ChatBudget.from_json(
+        {"max_turns": 3, "max_minutes": 0.5, "max_output_tokens": 100}
+    )
+    assert budget == ChatBudget(3, 0.5, 100)
+    assert budget.to_json() == {
+        "max_turns": 3,
+        "max_minutes": 0.5,
+        "max_output_tokens": 100,
+    }
+    for bad in ({"max_turns": 0}, {"max_minutes": -1}, {"max_output_tokens": True}):
+        with pytest.raises(ChatSessionError):
+            ChatBudget.from_json(bad)
+    with pytest.raises(ChatSessionError):
+        ChatBudget.from_json({"max_turns": "5"})
+
+
+@pytest.mark.asyncio
+async def test_policy_preset_compiles_settings_and_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    calls: list[tuple[str, str]] = []
+    captured: list[list[str]] = []
+
+    def compiler(preset: str, cwd: str) -> tuple[str, str]:
+        calls.append((preset, cwd))
+        if preset == "bogus":
+            raise ValueError("Unknown preset: 'bogus'")
+        return '{"permissions":{"deny":["Edit(.git/**)"]}}', "acceptEdits"
+
+    real_start = InteractiveClaudeSession.start
+
+    async def spy(self, *, argv, env):
+        captured.append(list(argv))
+        await real_start(self, argv=argv, env=env)
+
+    monkeypatch.setattr(InteractiveClaudeSession, "start", spy)
+    registry = _coder_registry(tmp_path, policy_compiler=compiler)
+    try:
+        session = await registry.start(cwd=str(tmp_path), policy_preset="workspace")
+        assert session.permission_mode == "acceptEdits"
+        assert session.snapshot()["policy_preset"] == "workspace"
+        argv = captured[-1]
+        assert "Edit(.git/**)" in argv[argv.index("--settings") + 1]
+        explicit = await registry.start(
+            cwd=str(tmp_path), policy_preset="workspace", permission_mode="plan"
+        )
+        assert explicit.permission_mode == "plan"
+        with pytest.raises(ChatSessionError, match="Unknown preset"):
+            await registry.start(cwd=str(tmp_path), policy_preset="bogus")
+        assert calls[0] == ("workspace", str(tmp_path))
+        plain = _coder_registry(tmp_path)
+        with pytest.raises(ChatSessionError, match="not available"):
+            await plain.start(cwd=str(tmp_path), policy_preset="workspace")
+    finally:
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_token_budget_interrupts_and_blocks_new_prompts(tmp_path: Path):
+    registry = _coder_registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path), budget={"max_output_tokens": 20})
+    events = session.subscribe()
+    try:
+        assert session.budget == ChatBudget(max_output_tokens=20)
+        assert "budget" in session.snapshot() and "usage" in session.snapshot()
+        await session.send_user_message("work\nUSAGE 50\nHANG")
+        notice = await _next(events, lambda e: e.get("type") == "fcc_budget")
+        assert notice == {
+            "type": "fcc_budget",
+            "kind": "tokens",
+            "limit": 20,
+            "used": 50,
+            "action": "interrupted",
+        }
+        result = await _next(events, lambda e: e.get("type") == "result")
+        assert result["subtype"] == "error_during_execution"  # interrupt reached Claude
+        assert not session.busy
+        usage = session.usage()
+        assert usage["turns"] == 1 and usage["input_tokens"] == 10
+        with pytest.raises(ChatSessionError, match="budget"):
+            await session.send_user_message("more")
+    finally:
+        await events.aclose()
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_time_budget_reports_minutes(tmp_path: Path):
+    registry = _coder_registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path), budget={"max_minutes": 0.002})
+    events = session.subscribe()
+    try:
+        await session.send_user_message("slow\nHANG")
+        notice = await _next(events, lambda e: e.get("type") == "fcc_budget")
+        assert notice["kind"] == "time" and notice["limit"] == 0.002
+        assert isinstance(notice["used"], float) and notice["used"] < 1
+        await _next(events, lambda e: e.get("type") == "result")
+    finally:
+        await events.aclose()
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_usage_accumulates_and_turn_budget_triggers(tmp_path: Path):
+    registry = _coder_registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path), budget={"max_turns": 1})
+    events = session.subscribe()
+    try:
+        await session.send_user_message("one\nUSAGE 7")
+        await _next(events, lambda e: e.get("type") == "result")
+        assert session.usage()["output_tokens"] == 7
+        await session.send_user_message("two")
+        notice = await _next(events, lambda e: e.get("type") == "fcc_budget")
+        assert notice["kind"] == "turns" and notice["used"] == 2
+    finally:
+        await events.aclose()
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_observer_sees_events_and_failures_are_contained(tmp_path: Path):
+    seen: list[str] = []
+
+    def observer(session: InteractiveClaudeSession, event: dict) -> None:
+        seen.append(str(event.get("type")))
+        if event.get("type") == "result":
+            session.publish({"type": "fcc_note"})
+            raise RuntimeError("observer bug")
+
+    registry = _coder_registry(tmp_path, observer=observer)
+    session = await registry.start(cwd=str(tmp_path))
+    events = session.subscribe()
+    try:
+        await session.send_user_message("hi")
+        await _next(events, lambda e: e.get("type") == "fcc_note")
+        await _next(events, lambda e: e.get("type") == "fcc_state" and not e["busy"])
+        assert {"fcc_state", "fcc_user", "assistant", "result"} <= set(seen)
+    finally:
+        await events.aclose()
+        await registry.stop_all()
