@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import FastAPI
@@ -70,10 +70,10 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner():
     warm_cache.assert_awaited_once()
     start_refresh.assert_called_once()
     get_logger.assert_any_call("uvicorn.error")
-    uvicorn_logger.info.assert_called_once_with(
-        "Admin UI: %s (local-only)",
-        "http://127.0.0.1:9099/admin",
-    )
+    assert uvicorn_logger.info.call_args_list == [
+        call("Admin UI: %s (local-only)", "http://127.0.0.1:9099/admin"),
+        call("Chat UI: %s (local-only)", "http://127.0.0.1:9099/chat"),
+    ]
 
 
 def test_create_app_application_error_handler_returns_anthropic_format():

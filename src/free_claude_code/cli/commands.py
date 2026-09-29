@@ -5,11 +5,13 @@ from __future__ import annotations
 import threading
 import time
 import webbrowser
+from collections.abc import Callable
 from enum import StrEnum
 
 import uvicorn
 from loguru import logger
 
+from free_claude_code.cli.app_window import open_app_window
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.process_registry import kill_all_best_effort
 from free_claude_code.config.loader import (
@@ -18,7 +20,11 @@ from free_claude_code.config.loader import (
     repair_invalid_managed_provider_proxies,
 )
 from free_claude_code.config.paths import managed_env_path
-from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
+from free_claude_code.config.server_urls import (
+    local_admin_url,
+    local_chat_url,
+    local_proxy_root_url,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.runtime.bootstrap import build_asgi_app
 
@@ -203,25 +209,45 @@ def load_server_settings() -> Settings:
     return get_settings()
 
 
-def open_admin_when_ready(settings: Settings) -> bool:
-    """Wait briefly for /health, then open the current Admin UI."""
+def _open_when_ready(
+    settings: Settings, url: str, opener: Callable[[str], bool]
+) -> bool:
+    """Wait briefly for /health, then open ``url`` with ``opener``."""
 
-    admin_url = local_admin_url(settings)
     proxy_root_url = local_proxy_root_url(settings)
     deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
         if preflight_proxy(proxy_root_url) is None:
-            return webbrowser.open(admin_url)
+            return opener(url)
         time.sleep(0.15)
     return False
+
+
+def open_admin_when_ready(settings: Settings) -> bool:
+    """Wait briefly for /health, then open the current Admin UI."""
+
+    return _open_when_ready(settings, local_admin_url(settings), webbrowser.open)
+
+
+def open_chat_when_ready(settings: Settings) -> bool:
+    """Wait briefly for /health, then open the chat UI as an app window."""
+
+    return _open_when_ready(settings, local_chat_url(settings), open_app_window)
+
+
+def _schedule(
+    target: Callable[[Settings], bool], settings: Settings, name: str
+) -> None:
+    threading.Thread(target=target, args=(settings,), name=name, daemon=True).start()
 
 
 def schedule_open_admin_browser(settings: Settings) -> None:
     """Open Admin after health succeeds without blocking the caller."""
 
-    threading.Thread(
-        target=open_admin_when_ready,
-        args=(settings,),
-        name="fcc-open-admin-browser",
-        daemon=True,
-    ).start()
+    _schedule(open_admin_when_ready, settings, "fcc-open-admin-browser")
+
+
+def schedule_open_chat_window(settings: Settings) -> None:
+    """Open the chat app window after health succeeds without blocking the caller."""
+
+    _schedule(open_chat_when_ready, settings, "fcc-open-chat-window")

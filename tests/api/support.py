@@ -57,6 +57,7 @@ def create_test_app(
             requests=manager,
             admin=runtime,
             tasks=runtime,
+            chat=runtime.chat_sessions,
         )
     )
 

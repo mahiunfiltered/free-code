@@ -4,6 +4,8 @@ import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
 from free_claude_code.cli.desktop import DesktopController
 from free_claude_code.config.settings import Settings
@@ -97,6 +99,7 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
             self.run_thread_id = threading.get_ident()
             assert supervisor.started.wait(2)
             self.controller.open_admin()
+            self.controller.open_chat()
             self.controller.restart_server()
             self.controller.quit()
 
@@ -112,17 +115,19 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
         return tray
 
     main_thread_id = threading.get_ident()
-    controller = DesktopController(supervisor, make_tray, opened.set)
+    chat_opened = threading.Event()
+    controller = DesktopController(supervisor, make_tray, opened.set, chat_opened.set)
     controller.run()
 
     assert tray is not None
     assert tray.run_thread_id == main_thread_id
-    assert supervisor.run_arguments == [None]
+    assert supervisor.run_arguments == [False]
     assert supervisor.schedule_count == 1
     assert supervisor.restart_count == 1
     assert supervisor.stop_count >= 1
     assert tray.stop_count >= 1
     assert opened.is_set()
+    assert chat_opened.is_set()
 
 
 def test_restart_during_server_startup_is_accepted_without_waiting() -> None:
@@ -142,7 +147,7 @@ def test_restart_during_server_startup_is_accepted_without_waiting() -> None:
             return True
 
         def run(self, *, open_admin_browser: bool | None = None) -> None:
-            assert open_admin_browser is None
+            assert open_admin_browser is False
             self.run_called.set()
             assert self.allow_run.wait(2)
             self.run_scheduled = False
@@ -180,7 +185,7 @@ def test_restart_during_server_startup_is_accepted_without_waiting() -> None:
         tray = WaitingTray(controller)
         return tray
 
-    controller = DesktopController(supervisor, make_tray, MagicMock())
+    controller = DesktopController(supervisor, make_tray, MagicMock(), MagicMock())
     controller_thread = threading.Thread(target=controller.run)
     controller_thread.start()
     assert tray is not None
@@ -206,7 +211,7 @@ def test_restart_during_server_startup_is_accepted_without_waiting() -> None:
     assert not controller_thread.is_alive()
 
 
-def test_second_desktop_launch_opens_existing_admin_without_new_server() -> None:
+def test_second_desktop_launch_opens_existing_chat_without_new_server() -> None:
     from free_claude_code.cli import desktop
 
     settings = _settings()
@@ -216,12 +221,12 @@ def test_second_desktop_launch_opens_existing_admin_without_new_server() -> None
     with (
         patch.object(desktop, "load_server_settings", return_value=settings),
         patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
-        patch.object(desktop, "open_admin_when_ready", return_value=True) as open_admin,
+        patch.object(desktop, "open_chat_when_ready", return_value=True) as open_chat,
         patch.object(desktop, "ServerSupervisor") as supervisor,
     ):
         desktop.launch_desktop(MagicMock())
 
-    open_admin.assert_called_once_with(settings)
+    open_chat.assert_called_once_with(settings)
     supervisor.assert_not_called()
     instance_lock.release.assert_not_called()
 
@@ -237,12 +242,12 @@ def test_desktop_attaches_to_terminal_server_instead_of_binding_twice() -> None:
         patch.object(desktop, "load_server_settings", return_value=settings),
         patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
         patch.object(desktop, "preflight_proxy", return_value=None),
-        patch.object(desktop, "open_admin_when_ready", return_value=True) as open_admin,
+        patch.object(desktop, "open_chat_when_ready", return_value=True) as open_chat,
         patch.object(desktop, "ServerSupervisor") as supervisor,
     ):
         desktop.launch_desktop(MagicMock())
 
-    open_admin.assert_called_once_with(settings)
+    open_chat.assert_called_once_with(settings)
     supervisor.assert_not_called()
     instance_lock.release.assert_called_once_with()
 
@@ -262,6 +267,7 @@ def test_fresh_desktop_launch_uses_console_free_supervisor() -> None:
         patch.object(desktop, "preflight_proxy", return_value="connection refused"),
         patch.object(desktop, "ServerSupervisor", return_value=supervisor) as owner,
         patch.object(desktop, "DesktopController", return_value=controller) as shell,
+        patch.object(desktop, "schedule_open_chat_window") as open_chat,
     ):
         tray_factory = MagicMock()
         desktop.launch_desktop(tray_factory)
@@ -269,4 +275,32 @@ def test_fresh_desktop_launch_uses_console_free_supervisor() -> None:
     owner.assert_called_once_with(console_logging=False)
     assert shell.call_args.args[:2] == (supervisor, tray_factory)
     controller.run.assert_called_once_with()
+    open_chat.assert_called_once_with(settings)
     instance_lock.release.assert_called_once_with()
+
+
+def test_tray_default_action_opens_chat_window() -> None:
+    pytest.importorskip("pystray")
+    from free_claude_code.cli import desktop_tray
+
+    controller = MagicMock()
+    with (
+        patch.object(desktop_tray, "Icon"),
+        patch.object(desktop_tray, "Menu"),
+        patch.object(desktop_tray, "MenuItem") as menu_item,
+        patch.object(desktop_tray, "_create_icon"),
+    ):
+        desktop_tray.PystrayDesktopTray(controller)
+
+    items = {call.args[0]: call for call in menu_item.call_args_list}
+    defaults = [
+        label for label, call in items.items() if call.kwargs.get("default") is True
+    ]
+    assert defaults == ["Open Claude"]
+    assert "Providers & Models" in items
+
+    items["Open Claude"].args[1](MagicMock(), MagicMock())
+    controller.open_chat.assert_called_once_with()
+    controller.open_admin.assert_not_called()
+    items["Providers & Models"].args[1](MagicMock(), MagicMock())
+    controller.open_admin.assert_called_once_with()

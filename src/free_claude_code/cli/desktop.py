@@ -10,8 +10,9 @@ from free_claude_code.cli.commands import (
     ServerStatus,
     ServerSupervisor,
     load_server_settings,
-    open_admin_when_ready,
+    open_chat_when_ready,
     schedule_open_admin_browser,
+    schedule_open_chat_window,
 )
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.config.loader import get_settings
@@ -57,9 +58,11 @@ class DesktopController:
         supervisor: ServerOwner,
         tray_factory: DesktopTrayFactory,
         open_admin: Callable[[], None],
+        open_chat: Callable[[], None],
     ) -> None:
         self._supervisor = supervisor
         self._open_admin = open_admin
+        self._open_chat = open_chat
         self._thread_lock = threading.Lock()
         self._server_thread: threading.Thread | None = None
         self._tray = tray_factory(self)
@@ -84,6 +87,9 @@ class DesktopController:
 
     def open_admin(self) -> None:
         self._open_admin()
+
+    def open_chat(self) -> None:
+        self._open_chat()
 
     def restart_server(self) -> None:
         """Restart an active server or relaunch one that exited unexpectedly."""
@@ -114,7 +120,8 @@ class DesktopController:
             self._server_thread.start()
 
     def _run_server(self) -> None:
-        self._supervisor.run()
+        # The desktop shell opens the chat window itself instead of Admin.
+        self._supervisor.run(open_admin_browser=False)
 
 
 def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
@@ -123,12 +130,12 @@ def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
     settings = load_server_settings()
     instance_lock = InterprocessFileLock(config_dir_path() / "desktop.lock")
     if not instance_lock.acquire():
-        open_admin_when_ready(settings)
+        open_chat_when_ready(settings)
         return
 
     try:
         if preflight_proxy(local_proxy_root_url(settings)) is None:
-            open_admin_when_ready(settings)
+            open_chat_when_ready(settings)
             return
 
         supervisor = ServerSupervisor(console_logging=False)
@@ -136,6 +143,13 @@ def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
         def open_current_admin() -> None:
             schedule_open_admin_browser(get_settings())
 
-        DesktopController(supervisor, tray_factory, open_current_admin).run()
+        def open_current_chat() -> None:
+            schedule_open_chat_window(get_settings())
+
+        controller = DesktopController(
+            supervisor, tray_factory, open_current_admin, open_current_chat
+        )
+        schedule_open_chat_window(settings)
+        controller.run()
     finally:
         instance_lock.release()

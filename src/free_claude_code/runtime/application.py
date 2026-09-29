@@ -23,6 +23,7 @@ from free_claude_code.application.connected_accounts import (
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import StopResult
+from free_claude_code.cli.managed.interactive import InteractiveClaudeSessions
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
     commit_prepared_admin_update,
@@ -33,8 +34,12 @@ from free_claude_code.config.admin.status import provider_config_status
 from free_claude_code.config.admin.values import load_value_state
 from free_claude_code.config.loader import clear_settings_cache
 from free_claude_code.config.model_refs import parse_provider_type
-from free_claude_code.config.paths import messaging_state_dir_path
-from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
+from free_claude_code.config.paths import config_dir_path, messaging_state_dir_path
+from free_claude_code.config.server_urls import (
+    local_admin_url,
+    local_chat_url,
+    local_proxy_root_url,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
@@ -122,6 +127,10 @@ class ApplicationRuntime:
             None
         )
         self._cli_manager: cli_managed.ManagedClaudeSessionManager | None = None
+        self.chat_sessions = InteractiveClaudeSessions(
+            proxy_target=self._proxy_target,
+            app_sessions_path=config_dir_path() / "chat-sessions.json",
+        )
         self._started = False
         self._closed = False
         self._provider_manager_closed = False
@@ -148,6 +157,10 @@ class ApplicationRuntime:
             logging.getLogger("uvicorn.error").info(
                 "Admin UI: %s (local-only)",
                 local_admin_url(self.settings),
+            )
+            logging.getLogger("uvicorn.error").info(
+                "Chat UI: %s (local-only)",
+                local_chat_url(self.settings),
             )
             self._started = True
         except asyncio.CancelledError:
@@ -435,7 +448,12 @@ class ApplicationRuntime:
             await workflow.publish_startup_notice(components.startup_notice)
         logger.info("{} platform started with messaging workflow", components.name)
 
+    def _proxy_target(self) -> tuple[str, str]:
+        settings = self.settings
+        return local_proxy_root_url(settings), settings.proxy_auth_token
+
     async def _close_owned_resources(self) -> bool:
+        await self.chat_sessions.stop_all()
         if not await self._cleanup_messaging():
             return False
         if not await self._cleanup_transcriber():

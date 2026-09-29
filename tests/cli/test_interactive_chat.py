@@ -1,0 +1,470 @@
+"""Interactive chat sessions: argv, control protocol, lifecycle, and transcripts."""
+
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+from free_claude_code.cli.managed import interactive, transcripts
+from free_claude_code.cli.managed.interactive import (
+    MAX_REPLAY_EVENTS,
+    ChatSessionError,
+    InteractiveClaudeSession,
+    InteractiveClaudeSessions,
+    build_interactive_claude_argv,
+)
+
+FAKE = Path(__file__).with_name("fake_claude_stream.py")
+
+
+def _fake_claude(tmp_path: Path) -> str:
+    if os.name == "nt":
+        wrapper = tmp_path / "fake_claude.bat"
+        wrapper.write_text(f'@"{sys.executable}" "{FAKE}" %*\r\n', encoding="utf-8")
+    else:
+        wrapper = tmp_path / "fake_claude"
+        wrapper.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{FAKE}" "$@"\n', encoding="utf-8"
+        )
+        wrapper.chmod(0o755)
+    return str(wrapper)
+
+
+def _registry(tmp_path: Path) -> InteractiveClaudeSessions:
+    return InteractiveClaudeSessions(
+        proxy_target=lambda: ("http://127.0.0.1:1", "token"),
+        claude_bin=_fake_claude(tmp_path),
+    )
+
+
+async def _next(events, predicate, timeout: float = 20.0):
+    async def find():
+        async for event in events:
+            if predicate(event):
+                return event
+        raise AssertionError("stream ended")
+
+    return await asyncio.wait_for(find(), timeout)
+
+
+def test_argv_carries_protocol_flags_model_and_resume():
+    argv = build_interactive_claude_argv(
+        claude_bin="claude", permission_mode="plan", model="m1", resume_session_id="abc"
+    )
+    assert argv[0] == "claude"
+    for flag in (
+        "--input-format",
+        "--output-format",
+        "--include-partial-messages",
+        "--verbose",
+    ):
+        assert flag in argv
+    assert argv[argv.index("--permission-prompt-tool") + 1] == "stdio"
+    assert argv[argv.index("--permission-mode") + 1] == "plan"
+    assert argv[argv.index("--model") + 1] == "m1"
+    assert argv[argv.index("--resume") + 1] == "abc"
+    bare = build_interactive_claude_argv(
+        claude_bin="claude",
+        permission_mode="default",
+        model=None,
+        resume_session_id=None,
+    )
+    assert "--model" not in bare and "--resume" not in bare
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_bad_mode_and_missing_folder(tmp_path: Path):
+    registry = _registry(tmp_path)
+    with pytest.raises(ChatSessionError):
+        await registry.start(cwd=str(tmp_path), permission_mode="yolo")
+    with pytest.raises(ChatSessionError):
+        await registry.start(cwd=str(tmp_path / "missing"))
+    missing_bin = InteractiveClaudeSessions(
+        proxy_target=lambda: ("http://x", "t"), claude_bin="definitely-not-claude-xyz"
+    )
+    with pytest.raises(ChatSessionError):
+        await missing_bin.start(cwd=str(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_full_turn_with_permission_prompt_and_controls(tmp_path: Path):
+    registry = _registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path))
+    events = session.subscribe()
+    try:
+        init = await _next(events, lambda e: e.get("type") == "fcc_initialize")
+        assert init["response"]["models"][0]["value"] == "m1"
+        hook = await _next(events, lambda e: e.get("type") == "fake_hook_answered")
+        assert (
+            hook["subtype"] == "error"
+        )  # unsupported inbound control never hangs Claude
+        assert session.session_id == "11111111-2222-3333-4444-555555555555"
+        assert session.model == "fake-model"
+
+        await session.send_user_message("hello")
+        assert session.busy and session.has_messages
+        echo = await _next(events, lambda e: e.get("type") == "fcc_user")
+        assert echo["message"]["content"] == "hello"
+        prompt = await _next(events, lambda e: e.get("type") == "control_request")
+        assert prompt["request"]["tool_name"] == "Write"
+
+        with pytest.raises(ChatSessionError):
+            await session.respond_permission("not-pending", {"behavior": "allow"})
+        await session.respond_permission(
+            "perm_1", {"behavior": "allow", "updatedInput": prompt["request"]["input"]}
+        )
+        resolved = await _next(
+            events, lambda e: e.get("type") == "fcc_permission_resolved"
+        )
+        assert resolved["behavior"] == "allow"
+        text = await _next(events, lambda e: e.get("type") == "assistant")
+        assert text["message"]["content"][0]["text"] == "decision=allow"
+        await _next(events, lambda e: e.get("type") == "result")
+        assert not session.busy
+
+        assert await session.control({"subtype": "set_model", "model": "m1"}) == {
+            "model": "m1"
+        }
+        assert session.model == "m1"
+        await session.control({"subtype": "set_permission_mode", "mode": "plan"})
+        assert session.permission_mode == "plan"
+        assert await session.control({"subtype": "interrupt"}) == {}
+    finally:
+        await events.aclose()
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_replay_marks_backlog_end_and_exit_releases_session(tmp_path: Path):
+    registry = _registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path))
+    first = session.subscribe()
+    await _next(first, lambda e: e.get("type") == "fcc_initialize")
+    await first.aclose()
+
+    replay = session.subscribe()
+    kinds = []
+    async for event in replay:
+        kinds.append(event["type"])
+        if event["type"] == "fcc_replay_end":
+            break
+    assert "fcc_initialize" in kinds and kinds[-1] == "fcc_replay_end"
+    assert "stream_event" not in kinds
+
+    await session.close()
+    exit_event = await _next(replay, lambda e: e.get("type") == "fcc_exit")
+    assert "code" in exit_event
+    await replay.aclose()
+    for _ in range(50):
+        if registry.get(session.live_id) is None:
+            break
+        await asyncio.sleep(0.05)
+    assert registry.get(session.live_id) is None
+    with pytest.raises(ChatSessionError):
+        await session.send_user_message("after exit")
+
+
+async def _backlog(session) -> list[dict]:
+    stream = session.subscribe()
+    events = []
+    try:
+        async for event in stream:
+            if event["type"] == "fcc_replay_end":
+                return events
+            events.append(event)
+    finally:
+        await stream.aclose()
+    raise AssertionError("no replay end")
+
+
+@pytest.mark.asyncio
+async def test_permission_prompt_replayed_to_reconnecting_client_is_answerable(
+    tmp_path: Path,
+):
+    registry = _registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path))
+    first = session.subscribe()
+    try:
+        await _next(first, lambda e: e.get("type") == "fcc_initialize")
+        await session.send_user_message("hi")
+        await _next(first, lambda e: e.get("type") == "control_request")
+        await first.aclose()
+
+        second = session.subscribe()
+        replayed = await _next(
+            second,
+            lambda e: (
+                e.get("type") == "control_request"
+                and e["request"]["subtype"] == "can_use_tool"
+            ),
+        )
+        await session.respond_permission(replayed["request_id"], {"behavior": "deny"})
+        text = await _next(second, lambda e: e.get("type") == "assistant")
+        assert text["message"]["content"][0]["text"] == "decision=deny"
+        await second.aclose()
+        with pytest.raises(ChatSessionError):
+            await session.respond_permission(replayed["request_id"], {"behavior": "x"})
+    finally:
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_writes_after_exit_fail_fast_and_close_is_idempotent(tmp_path: Path):
+    never_started = InteractiveClaudeSession(
+        live_id="x",
+        cwd=str(tmp_path),
+        permission_mode="default",
+        model=None,
+        resume_session_id=None,
+    )
+    await never_started.close()
+
+    registry = _registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path))
+    events = session.subscribe()
+    await _next(events, lambda e: e.get("type") == "fcc_initialize")
+    await session.close()
+    await _next(events, lambda e: e.get("type") == "fcc_exit")
+    await events.aclose()
+    await session.close()  # process already gone
+    with pytest.raises(ChatSessionError):
+        await asyncio.wait_for(session.control({"subtype": "interrupt"}), 5.0)
+    await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_event_handler_error_does_not_stop_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    registry = _registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path))
+    original = session._handle_event
+    failures = []
+
+    async def flaky(event):
+        if not failures:
+            failures.append(event)
+            raise RuntimeError("boom")
+        await original(event)
+
+    monkeypatch.setattr(session, "_handle_event", flaky)
+    events = session.subscribe()
+    try:
+        await _next(events, lambda e: e.get("type") == "fcc_initialize")
+        assert failures and not session.exited
+    finally:
+        await events.aclose()
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_unreadable_stdout_kills_process_and_publishes_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(interactive, "_STDOUT_LINE_LIMIT", 2048)
+    registry = _registry(tmp_path)
+    session = await registry.start(cwd=str(tmp_path))
+    events = session.subscribe()
+    try:
+        await _next(events, lambda e: e.get("type") == "fcc_initialize")
+        await session.send_user_message("__long_line__")
+        await _next(events, lambda e: e.get("type") == "fcc_exit")
+        assert session.exited
+    finally:
+        await events.aclose()
+        await registry.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_replay_buffer_is_bounded_but_keeps_open_prompts_and_latest_state(
+    tmp_path: Path,
+):
+    session = InteractiveClaudeSession(
+        live_id="x",
+        cwd=str(tmp_path),
+        permission_mode="default",
+        model=None,
+        resume_session_id=None,
+    )
+    session._publish({"type": "fcc_initialize", "response": {"n": 1}})
+    await session._handle_event(
+        {
+            "type": "control_request",
+            "request_id": "open",
+            "request": {"subtype": "can_use_tool", "tool_name": "Write"},
+        }
+    )
+    for n in range(MAX_REPLAY_EVENTS * 2):
+        await session._handle_event({"type": "assistant", "n": n})
+    session.model = "latest"
+    session._publish(session._state_event())
+
+    backlog = await _backlog(session)
+    assert len(backlog) <= MAX_REPLAY_EVENTS
+    prompt = next(e for e in backlog if e["type"] == "control_request")
+    assert prompt["request_id"] == "open"
+    assert any(e["type"] == "fcc_initialize" for e in backlog)
+    assert backlog[-1]["type"] == "fcc_state" and backlog[-1]["model"] == "latest"
+    ns = [e["n"] for e in backlog if e["type"] == "assistant"]
+    assert ns == sorted(ns) and ns[-1] == MAX_REPLAY_EVENTS * 2 - 1
+
+
+@pytest.mark.asyncio
+async def test_search_files_validates_folder(tmp_path: Path):
+    registry = _registry(tmp_path)
+    (tmp_path / "a.py").write_text("x", encoding="utf-8")
+    assert "a.py" in await registry.search_files(str(tmp_path), "A.P")
+    with pytest.raises(ChatSessionError):
+        await registry.search_files(str(tmp_path / "missing"), "")
+    with pytest.raises(ChatSessionError):
+        await registry.search_files(str(tmp_path / "a.py"), "")
+
+
+def _write_jsonl(path: Path, entries: list[dict | str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
+
+
+def test_transcripts_list_titles_history_rename_delete(tmp_path: Path):
+    sid = "aaaaaaaa-0000-0000-0000-000000000001"
+    path = tmp_path / "proj" / f"{sid}.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {"type": "attachment", "cwd": "/work/app"},
+            {"type": "user", "isMeta": True, "message": {"content": "meta"}},
+            {
+                "type": "user",
+                "message": {
+                    "content": "<local-command-stdout>x</local-command-stdout>"
+                },
+            },
+            {
+                "type": "user",
+                "cwd": "/work/app",
+                "message": {"content": "Fix the  login bug"},
+            },
+            {
+                "type": "assistant",
+                "message": {"id": "a", "content": [{"type": "text", "text": "ok"}]},
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "t", "content": "r"}
+                    ]
+                },
+            },
+            {"type": "user", "isSidechain": True, "message": {"content": "sub"}},
+            {"type": "system", "subtype": "compact_boundary"},
+            {
+                "type": "user",
+                "isCompactSummary": True,
+                "message": {"content": "summary"},
+            },
+            "not-an-object",
+        ],
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("{broken json\n")
+    _write_jsonl(
+        tmp_path / "proj" / "bbbbbbbb-hooks-only.jsonl", [{"type": "attachment"}]
+    )
+
+    [summary] = transcripts.list_transcripts(root=tmp_path)
+    assert summary.session_id == sid
+    assert summary.title == "Fix the login bug"
+    assert summary.cwd == "/work/app"
+
+    events = transcripts.load_transcript_events(path)
+    assert [e["type"] for e in events] == ["fcc_user", "assistant", "user", "system"]
+
+    transcripts.rename_transcript(path, sid, "Login fix")
+    assert transcripts.list_transcripts(root=tmp_path)[0].title == "Login fix"
+
+    assert transcripts.find_transcript(sid, root=tmp_path) == path
+    assert transcripts.find_transcript("../../etc/passwd", root=tmp_path) is None
+    transcripts.delete_transcript(path)
+    assert transcripts.list_transcripts(root=tmp_path) == []
+    assert transcripts.list_transcripts(root=tmp_path / "nope") == []
+
+
+def test_slash_command_prompt_becomes_title(tmp_path: Path):
+    path = tmp_path / "p" / "cccccccc-0000.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<command-name>/review</command-name><command-args>x</command-args>",
+                        }
+                    ]
+                },
+            },
+            {"type": "ai-title", "aiTitle": "Review PR"},
+        ],
+    )
+    assert transcripts.list_transcripts(root=tmp_path)[0].title == "Review PR"
+    assert transcripts.load_transcript_events(path)[0]["type"] == "fcc_user"
+
+
+@pytest.mark.asyncio
+async def test_app_sessions_are_remembered_and_flagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = tmp_path / "fcc" / "chat-sessions.json"
+    registry = InteractiveClaudeSessions(
+        proxy_target=lambda: ("http://127.0.0.1:1", "token"),
+        claude_bin=_fake_claude(tmp_path),
+        app_sessions_path=store,
+    )
+    session = await registry.start(cwd=str(tmp_path))
+    events = session.subscribe()
+    try:
+        await _next(events, lambda e: e.get("type") == "fcc_initialize")
+        assert not store.exists()  # warm process without a prompt is not an app chat
+        await session.send_user_message("hi")
+    finally:
+        await events.aclose()
+        await registry.stop_all()
+    sid = "11111111-2222-3333-4444-555555555555"
+    assert json.loads(store.read_text(encoding="utf-8")) == [sid]
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    for session_id in (sid, "99999999-0000-0000-0000-000000000000"):
+        _write_jsonl(
+            tmp_path / "claude" / "projects" / "p" / f"{session_id}.jsonl",
+            [{"type": "user", "message": {"content": "prompt"}}],
+        )
+    reloaded = InteractiveClaudeSessions(
+        proxy_target=lambda: ("http://x", "t"), app_sessions_path=store
+    )
+    flags = {t["session_id"]: t["app"] for t in reloaded.list_transcripts()}
+    assert flags == {sid: True, "99999999-0000-0000-0000-000000000000": False}
+
+    store.write_text("{not json", encoding="utf-8")
+    broken = InteractiveClaudeSessions(
+        proxy_target=lambda: ("x", "t"), app_sessions_path=store
+    )
+    assert not any(t["app"] for t in broken.list_transcripts())
+
+
+def test_argv_pins_workspace_folder_in_system_prompt(tmp_path: Path):
+    argv = build_interactive_claude_argv(
+        claude_bin="claude",
+        permission_mode="default",
+        model=None,
+        resume_session_id=None,
+        cwd=str(tmp_path),
+    )
+    prompt = argv[argv.index("--append-system-prompt") + 1]
+    assert str(tmp_path) in prompt
+    assert ("Windows" in prompt) == (os.name == "nt")

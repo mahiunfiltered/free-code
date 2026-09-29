@@ -10,12 +10,16 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from free_claude_code.application.ports import RequestRuntimePort
-from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.config.model_refs import (
+    chat_picker_model_refs,
+    configured_chat_model_refs,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
     gateway_model_id,
     no_thinking_gateway_model_id,
 )
+from free_claude_code.core.json_types import JsonObject, JsonValue
 
 DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
 _INFERENCE_IDLE_TIMEOUT_MARGIN_SECONDS = 60
@@ -124,6 +128,35 @@ def build_models_list_response(
     if view is ModelCatalogView.CLAUDE:
         return _build_claude_models_response(settings, runtime)
     return _build_direct_models_response(settings, runtime, view=view)
+
+
+def build_chat_models_response(
+    settings: Settings, runtime: RequestRuntimePort
+) -> JsonObject:
+    """Return the chat UI model picker: configured refs as Claude Code gateway ids."""
+    models: list[JsonValue] = []
+    default: str | None = None
+    for ref in chat_picker_model_refs(settings):
+        supports_thinking = runtime.cached_model_supports_thinking(
+            ref.provider_id, ref.model_id
+        )
+        value = (
+            no_thinking_gateway_model_id(ref.model_ref)
+            if supports_thinking is False
+            else gateway_model_id(ref.model_ref)
+        )
+        is_default = ref.model_ref == settings.model
+        if is_default:
+            default = value
+        models.append(
+            {
+                "value": value,
+                "label": ref.model_ref,
+                "provider": ref.provider_id,
+                "default": is_default,
+            }
+        )
+    return {"models": models, "default": default}
 
 
 def _build_claude_models_response(

@@ -21,7 +21,8 @@ class PystrayDesktopTray:
             _create_icon(),
             "Free Claude Code",
             Menu(
-                MenuItem("Open Admin", self._open_admin, default=True),
+                MenuItem("Open Claude", self._open_chat, default=True),
+                MenuItem("Providers & Models", self._open_admin),
                 MenuItem("Check Server Status", self._check_status),
                 MenuItem("Restart Server", self._restart_server),
                 Menu.SEPARATOR,
@@ -34,6 +35,9 @@ class PystrayDesktopTray:
 
     def stop(self) -> None:
         self._icon.stop()
+
+    def _open_chat(self, _icon: Icon, _item: MenuItem) -> None:
+        self._controller.open_chat()
 
     def _open_admin(self, _icon: Icon, _item: MenuItem) -> None:
         self._controller.open_admin()

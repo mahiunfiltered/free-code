@@ -611,7 +611,8 @@ textarea:focus-visible,
   line-height: 1.4;
 }
 
-.field[data-key="MODEL_FALLBACKS"] {
+.field[data-key="MODEL_FALLBACKS"],
+.field[data-key="CHAT_MODELS"] {
   grid-column: 1 / -1;
 }
 

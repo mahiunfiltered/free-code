@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config import loader
+from free_claude_code.config.admin.manifest import FIELDS
 from free_claude_code.config.constants import (
     ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
     HTTP_CONNECT_TIMEOUT_DEFAULT,
@@ -22,6 +23,7 @@ from free_claude_code.config.loader import (
     repair_invalid_managed_provider_proxies,
 )
 from free_claude_code.config.model_refs import (
+    chat_picker_model_refs,
     configured_chat_model_refs,
     parse_model_name,
     parse_provider_type,
@@ -452,6 +454,67 @@ def test_configured_chat_model_refs_are_unique() -> None:
         "groq/vendor/model-a",
         "lmstudio/vendor/model-b",
     ]
+
+
+def test_chat_models_parse_trim_and_default_to_none() -> None:
+    assert Settings.model_validate({"CHAT_MODELS": " "}).chat_models is None
+    settings = Settings.model_validate(
+        {"CHAT_MODELS": "nvidia_nim/moonshotai/kimi-k3, nvidia_nim/z-ai/glm-5.3 "}
+    )
+    assert settings.chat_models == (
+        "nvidia_nim/moonshotai/kimi-k3",
+        "nvidia_nim/z-ai/glm-5.3",
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("nvidia_nim/a,nvidia_nim/a", "CHAT_MODELS must not contain duplicate"),
+        ("unknown/model", "Invalid provider"),
+        ("nvidia_nim/a,,nvidia_nim/b", "at least 1 character"),
+        ("no-provider", "prefixed with provider"),
+    ],
+)
+def test_chat_models_reject_invalid_refs(value: str, message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        Settings.model_validate({"CHAT_MODELS": value})
+
+
+def test_chat_models_is_an_admin_model_list_field() -> None:
+    field = next(field for field in FIELDS if field.key == "CHAT_MODELS")
+    assert (field.section_id, field.field_type, field.settings_attr) == (
+        "models",
+        "model_list",
+        "chat_models",
+    )
+
+
+def test_model_fallbacks_duplicate_error_names_its_own_key() -> None:
+    with pytest.raises(ValidationError, match="MODEL_FALLBACKS must not contain"):
+        Settings.model_validate({"MODEL_FALLBACKS": "groq/a,groq/a"})
+
+
+def test_chat_picker_model_refs_put_chat_models_first_and_dedupe() -> None:
+    settings = Settings(
+        model="nvidia_nim/nvidia/nemotron",
+        model_opus="open_router/vendor/opus",
+        model_haiku="nvidia_nim/nvidia/nemotron",
+        model_fallbacks=("groq/vendor/fallback", "nvidia_nim/moonshotai/kimi"),
+        chat_models=("nvidia_nim/moonshotai/kimi", "nvidia_nim/z-ai/glm"),
+    )
+
+    assert [ref.model_ref for ref in chat_picker_model_refs(settings)] == [
+        "nvidia_nim/moonshotai/kimi",
+        "nvidia_nim/z-ai/glm",
+        "nvidia_nim/nvidia/nemotron",
+        "open_router/vendor/opus",
+        "groq/vendor/fallback",
+    ]
+    # Chat models also count as configured refs (discovery and admin options).
+    assert "nvidia_nim/z-ai/glm" in {
+        ref.model_ref for ref in configured_chat_model_refs(settings)
+    }
 
 
 @pytest.mark.parametrize(

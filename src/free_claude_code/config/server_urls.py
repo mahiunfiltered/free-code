@@ -26,3 +26,9 @@ def local_admin_url(settings: Settings) -> str:
     """Return a browser-friendly URL for the localhost-only admin UI."""
 
     return f"{local_proxy_root_url(settings)}/admin"
+
+
+def local_chat_url(settings: Settings) -> str:
+    """Return a browser-friendly URL for the localhost-only chat UI."""
+
+    return f"{local_proxy_root_url(settings)}/chat"

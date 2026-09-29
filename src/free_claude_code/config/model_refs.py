@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Provider-prefixed model reference helpers."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -22,6 +23,7 @@ class ChatModelConfig(Protocol):
     model_sonnet: str | None
     model_haiku: str | None
     model_fallbacks: tuple[str, ...] | None
+    chat_models: tuple[str, ...] | None
 
 
 def split_provider_model_ref(model_ref: str) -> tuple[str, str]:
@@ -59,10 +61,29 @@ def configured_chat_model_refs(
             settings.model_sonnet,
             settings.model_haiku,
             *(settings.model_fallbacks or ()),
+            *(settings.chat_models or ()),
         )
         if model_ref is not None
     )
+    return _refs(model_refs)
 
+
+def chat_picker_model_refs(
+    settings: ChatModelConfig,
+) -> tuple[ConfiguredChatModelRef, ...]:
+    """Return chat UI picker refs: ``CHAT_MODELS`` first, then routing models."""
+
+    return _refs(
+        dict.fromkeys(
+            (
+                *(settings.chat_models or ()),
+                *(ref.model_ref for ref in configured_chat_model_refs(settings)),
+            )
+        )
+    )
+
+
+def _refs(model_refs: Iterable[str]) -> tuple[ConfiguredChatModelRef, ...]:
     return tuple(
         ConfiguredChatModelRef(
             model_ref=model_ref,

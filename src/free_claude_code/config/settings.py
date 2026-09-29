@@ -10,6 +10,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -389,6 +390,11 @@ class Settings(BaseModel):
     model_fallbacks: OptionalModelFallbacks = Field(
         default=None,
         validation_alias="MODEL_FALLBACKS",
+    )
+    # Models offered by the local chat UI model picker (provider/model refs).
+    chat_models: OptionalModelFallbacks = Field(
+        default=None,
+        validation_alias="CHAT_MODELS",
     )
 
     # ==================== Per-Provider Proxy ====================
@@ -797,16 +803,19 @@ class Settings(BaseModel):
             return None
         return _validate_model_ref(v)
 
-    @field_validator("model_fallbacks")
+    @field_validator("model_fallbacks", "chat_models")
     @classmethod
-    def validate_model_fallbacks(
-        cls, value: tuple[str, ...] | None
+    def validate_model_ref_list(
+        cls, value: tuple[str, ...] | None, info: ValidationInfo
     ) -> tuple[str, ...] | None:
         if value is None:
             return None
         validated = tuple(_validate_model_ref(model_ref) for model_ref in value)
         if len(validated) != len(set(validated)):
-            raise ValueError("MODEL_FALLBACKS must not contain duplicate model refs.")
+            env_key = (
+                "CHAT_MODELS" if info.field_name == "chat_models" else "MODEL_FALLBACKS"
+            )
+            raise ValueError(f"{env_key} must not contain duplicate model refs.")
         return validated
 
     @model_validator(mode="after")

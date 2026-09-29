@@ -140,6 +140,17 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "CHAT_MODELS",
+        "Chat Models",
+        "models",
+        "model_list",
+        settings_attr="chat_models",
+        description=(
+            "Models shown in the chat UI model picker, in order. The default, "
+            "tier override, and fallback models are always listed after these."
+        ),
+    ),
+    ConfigFieldSpec(
         "REASONING_POLICY",
         "Reasoning Policy",
         "reasoning",

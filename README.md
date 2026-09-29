@@ -168,6 +168,11 @@ fcc-aider
   <p><em>Select an FCC model from Claude Code's native <code>/model</code> picker.</em></p>
 </div>
 
+### Desktop Chat App
+
+FCC includes a local, Claude-desktop-style coding chat at `http://127.0.0.1:8082/chat`. It drives the real Claude Code CLI through stream-json, so file edits, commands, permission prompts, and plan mode work the same way as in the terminal. Open it from the tray (**Open Claude**), with `fcc-desktop`, or on Windows with `Claude-Desktop.bat` from a repo checkout. Choose its models with `CHAT_MODELS` in Admin.
+See [docs/claude-desktop-recreation.md](docs/claude-desktop-recreation.md) for the architecture, protocol walkthrough, setup, security notes, and student exercises. This app is unofficial and not affiliated with Anthropic.
+
 ## Choose A Provider
 
 1. Open a provider link below for its key, models, or setup instructions.

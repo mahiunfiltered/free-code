@@ -54,7 +54,7 @@ class ConnectedAccountLoginPayload(BaseModel):
     mode: ConnectedAccountLoginMode = ConnectedAccountLoginMode.BROWSER
 
 
-def _is_loopback_host(host: str | None) -> bool:
+def is_loopback_host(host: str | None) -> bool:
     if host is None:
         return False
     normalized = host.strip().strip("[]").lower()
@@ -70,14 +70,14 @@ def _origin_is_local(origin: str | None) -> bool:
     if not origin:
         return True
     parsed = urlsplit(origin)
-    return _is_loopback_host(parsed.hostname)
+    return is_loopback_host(parsed.hostname)
 
 
 def require_loopback_admin(request: Request) -> None:
     """Allow admin access only from the local machine."""
 
     client_host = request.client.host if request.client else None
-    if not _is_loopback_host(client_host):
+    if not is_loopback_host(client_host):
         raise HTTPException(status_code=403, detail="Admin UI is local-only")
 
     origin = request.headers.get("origin")

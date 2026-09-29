@@ -66,6 +66,7 @@ def build_asgi_app(
         requests=provider_manager,
         admin=runtime,
         tasks=runtime,
+        chat=runtime.chat_sessions,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 
