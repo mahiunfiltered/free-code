@@ -31,7 +31,7 @@
 3. The **Providers** setup page opens. In **NVIDIA models**, each row takes a model id (for example `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`) and an API key from [build.nvidia.com](https://build.nvidia.com/settings/api-keys). Pick one row as **Default**, then click **Save models**. If the Default model fails, the other rows are tried in order, and every key joins one shared failover pool. Keys are stored encrypted on your PC.
 4. Go back to the **Claude** chat window. Your models appear in the model picker, and you can start chatting in any folder.
 
-Each run checks every dependency and installs only what is missing. The first run fills in the starter models: Nemotron 3 Nano (the default; fast and reliable), with Nemotron 3 Ultra and DeepSeek V4.1 Flash as automatic fallbacks, plus Kimi K3 and GLM 5.3 in the picker. To use another provider, add its key the same way; only models from providers that have a key appear in the picker. Double-click **`Stop-All.bat`** to shut everything down.
+Each run checks every dependency and installs only what is missing. The first run fills in the starter models: Nemotron 3 Nano (the default; fast and reliable), with Nemotron 3 Ultra as the automatic fallback, plus DeepSeek V4.1 Flash, Kimi K3 and GLM 5.3 in the picker. When NVIDIA reports a model as busy, FreeCode waits briefly (1s, then 2s, then 4s) and retries before switching models. To use another provider, add its key the same way; only models from providers that have a key appear in the picker. Double-click **`Stop-All.bat`** to shut everything down.
 
 If something goes wrong:
 - **"Windows protected your PC"**: click **More info**, then **Run anyway**. The file came from the internet, so Windows asks once.

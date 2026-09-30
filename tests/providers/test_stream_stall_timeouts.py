@@ -160,7 +160,9 @@ async def _collect(stream: AsyncIterator[str]) -> str:
 
 
 @pytest.mark.asyncio
-async def test_first_byte_stall_fails_over_to_next_key(tmp_path) -> None:
+async def test_first_byte_stall_moves_on_to_the_next_model(tmp_path) -> None:
+    # A stalled model queue stalls on every key, so the pool raises the timeout
+    # quickly and lets MODEL_FALLBACKS pick the next model instead.
     server = StubServer({"key-a": _hang, "key-b": _healthy})
     store = Store(tmp_path / "fcc.db")
     try:
@@ -181,20 +183,19 @@ async def test_first_byte_stall_fails_over_to_next_key(tmp_path) -> None:
                 ],
                 pool=pool,
             )
-            body = await asyncio.wait_for(
-                _collect(provider.stream_messages(_request(), request_id="r1")),
-                timeout=10,
-            )
+            with pytest.raises(ExecutionFailure) as caught:
+                await asyncio.wait_for(
+                    _collect(provider.stream_messages(_request(), request_id="r1")),
+                    timeout=10,
+                )
             await provider.cleanup()
-        assert "hello" in body and "world" in body
+        assert caught.value.kind is FailureKind.TIMEOUT
         rows = list(reversed(pool.usage.recent(10)))
         assert [(r["key_label"], r["outcome"], r["failure_kind"]) for r in rows] == [
             ("a", "failed", "timeout"),
-            ("b", "ok", None),
         ]
         latency = rows[0]["latency_ms"]
         assert isinstance(latency, float) and latency < 3000
-        assert rows[1]["failover_from"] == "a"
     finally:
         store.close()
 

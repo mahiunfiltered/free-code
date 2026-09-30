@@ -285,7 +285,7 @@ async def test_request_errors_do_not_fail_over_or_touch_health(pool):
 @pytest.mark.asyncio
 async def test_failover_is_bounded_to_four_attempts(pool):
     providers = [
-        (f"k{i}", ScriptedProvider(fail(failure(FailureKind.OVERLOADED, 529))))
+        (f"k{i}", ScriptedProvider(fail(failure(FailureKind.UNAVAILABLE, 503))))
         for i in range(5)
     ]
     provider = pooled(pool, *providers)
@@ -293,7 +293,7 @@ async def test_failover_is_bounded_to_four_attempts(pool):
     with pytest.raises(ExecutionFailure) as caught:
         await collect(provider.stream_messages(request()))
 
-    assert caught.value.kind is FailureKind.OVERLOADED
+    assert caught.value.kind is FailureKind.UNAVAILABLE
     assert sum(p.calls for _label, p in providers) == 4
     recorded = rows(pool)
     assert [row["attempt"] for row in recorded] == [1, 2, 3, 4]
@@ -302,12 +302,65 @@ async def test_failover_is_bounded_to_four_attempts(pool):
 
 @pytest.mark.asyncio
 async def test_retries_previously_tried_key_once_all_keys_were_tried(pool):
-    a = ScriptedProvider(fail(failure(FailureKind.TIMEOUT)), ok("second-try"))
+    a = ScriptedProvider(fail(failure(FailureKind.UNAVAILABLE)), ok("second-try"))
     b = ScriptedProvider(fail(failure(FailureKind.UNAVAILABLE)))
     provider = pooled(pool, ("a", a), ("b", b))
 
     assert await collect(provider.stream_messages(request())) == ["second-try"]
     assert [row["key_label"] for row in rows(pool)] == ["a", "b", "a"]
+
+
+@pytest.mark.asyncio
+async def test_busy_model_keeps_retrying_past_attempt_budget_until_it_recovers(
+    pool, clock
+):
+    busy = fail(failure(FailureKind.OVERLOADED, 529))
+    a = ScriptedProvider(busy, busy, busy, ok("finally"))
+    b = ScriptedProvider(busy, busy, busy, ok("finally"))
+    provider = pooled(pool, ("a", a), ("b", b))
+
+    assert await collect(provider.stream_messages(request())) == ["finally"]
+    # More busy answers than the 4-attempt key budget, then success.
+    assert len(clock.sleeps) >= 4
+    assert clock.sleeps[:4] == [1.0, 2.0, 4.0, 8.0]
+
+
+@pytest.mark.asyncio
+async def test_busy_model_gives_up_after_capacity_window(pool, clock):
+    busy = fail(failure(FailureKind.OVERLOADED, 529))
+    a = ScriptedProvider(*([busy] * 20))
+    b = ScriptedProvider(*([busy] * 20))
+    provider = pooled(pool, ("a", a), ("b", b))
+
+    with pytest.raises(ExecutionFailure) as caught:
+        await collect(provider.stream_messages(request()))
+    assert caught.value.kind is FailureKind.OVERLOADED
+    assert sum(clock.sleeps) == pytest.approx(30.0)
+
+
+@pytest.mark.asyncio
+async def test_timeout_skips_other_keys_so_model_fallback_runs(pool):
+    a = ScriptedProvider(fail(failure(FailureKind.TIMEOUT)))
+    b = ScriptedProvider(ok("never"))
+    provider = pooled(pool, ("a", a), ("b", b))
+
+    with pytest.raises(ExecutionFailure) as caught:
+        await collect(provider.stream_messages(request()))
+    assert caught.value.kind is FailureKind.TIMEOUT
+    assert [row["key_label"] for row in rows(pool)] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_overloaded_model_backs_off_without_hurting_key_health(pool, clock):
+    a = ScriptedProvider(fail(failure(FailureKind.OVERLOADED, 529)), ok("recovered"))
+    b = ScriptedProvider(fail(failure(FailureKind.OVERLOADED, 529)))
+    provider = pooled(pool, ("a", a), ("b", b))
+
+    assert await collect(provider.stream_messages(request())) == ["recovered"]
+    assert clock.sleeps == [pytest.approx(1.0), pytest.approx(2.0)]
+    for label in ("a", "b"):
+        snapshot = pool.health.snapshot(pool.endpoint("nvidia_nim", label))
+        assert snapshot["consecutive_failures"] == 0 and snapshot["available"]
 
 
 @pytest.mark.asyncio

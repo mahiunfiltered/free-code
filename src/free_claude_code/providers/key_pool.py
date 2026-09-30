@@ -46,6 +46,10 @@ from .usage_records import UsageRecord, UsageRecorder
 
 DEFAULT_MAX_ATTEMPTS = 4
 DEFAULT_MAX_WAIT_S = 60.0
+# A busy model usually recovers within seconds; keep retrying it this long before
+# the executor falls back to a (usually slower) model.
+CAPACITY_RETRY_S = 30.0
+CAPACITY_BACKOFF_MAX_S = 8.0
 
 Sleep = Callable[[float], Awaitable[None]]
 StreamOpener = Callable[[BaseProvider], AsyncIterator[str]]
@@ -91,6 +95,17 @@ def health_signal(failure: ExecutionFailure) -> HealthSignal:
     if kind is FailureKind.UPSTREAM and failure.retryable:
         return HealthSignal.TRANSIENT
     return HealthSignal.NO_IMPACT
+
+
+def model_capacity_failure(failure: ExecutionFailure) -> bool:
+    """Overload/5xx is the model's shared capacity, not a fault of the key used.
+
+    NVIDIA-style providers report a busy model the same way on every key, so
+    these failures back off and retry without degrading the key's health.
+    """
+    return failure.kind is FailureKind.OVERLOADED or (
+        failure.kind is FailureKind.UPSTREAM and failure.retryable
+    )
 
 
 def failure_retry_after(failure: ExecutionFailure) -> float | None:
@@ -402,7 +417,11 @@ class PooledProvider(BaseProvider):
         tried: set[str] = set()
         failover_from: str | None = None
         last_failure: ExecutionFailure | None = None
-        for attempt in range(1, max_attempts + 1):
+        capacity_until = tracker.now() + CAPACITY_RETRY_S
+        capacity_retries = 0
+        attempt = 0
+        while True:
+            attempt += 1
             member, health = await self._acquire(tried, deadline, last_failure)
             label = member.key.label
             started = tracker.now()
@@ -432,9 +451,10 @@ class PooledProvider(BaseProvider):
                     outcome = "ok"
                 elif failure is not None:
                     signal = health_signal(failure)
-                    tracker.record_failure(
-                        health, signal, retry_after_s=failure_retry_after(failure)
-                    )
+                    if not model_capacity_failure(failure):
+                        tracker.record_failure(
+                            health, signal, retry_after_s=failure_retry_after(failure)
+                        )
                     outcome = _OUTCOMES[signal]
                 elif isinstance(active, asyncio.CancelledError | GeneratorExit):
                     outcome = "cancelled"
@@ -461,11 +481,28 @@ class PooledProvider(BaseProvider):
                 return
             if committed or signal is HealthSignal.NO_IMPACT:
                 raise failure
+            if failure.kind is FailureKind.TIMEOUT:
+                # A stalled model queue stalls on every key: move on to the
+                # next fallback model instead of waiting out the timeout again.
+                raise failure
             last_failure = failure
             tried.add(label)
             failover_from = label
-            if attempt == max_attempts:
+            capacity = model_capacity_failure(failure) and len(self._members) > 1
+            if attempt >= max_attempts and not (
+                capacity and tracker.now() < capacity_until
+            ):
                 break
+            if capacity:
+                # ponytail: exponential 1s..8s backoff; honor Retry-After if it matters.
+                capacity_retries += 1
+                await self._pool.sleep(
+                    min(
+                        2.0 ** (capacity_retries - 1),
+                        CAPACITY_BACKOFF_MAX_S,
+                        max(0.0, capacity_until - tracker.now()),
+                    )
+                )
             trace_event(
                 stage="provider",
                 event="provider.key_pool.failover",

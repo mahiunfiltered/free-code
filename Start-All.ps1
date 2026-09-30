@@ -103,7 +103,7 @@ if (Test-Path $starterEnv) {
         "MODEL_OPUS=`"$nano`"",
         "MODEL_SONNET=`"$nano`"",
         "MODEL_HAIKU=`"$nano`"",
-        "MODEL_FALLBACKS=`"$ultra,$flash`"",
+        "MODEL_FALLBACKS=`"$ultra`"",
         "CHAT_MODELS=`"$nano,$ultra,$flash,nvidia_nim/moonshotai/kimi-k3,nvidia_nim/z-ai/glm-5.3`"",
         "FCC_OPEN_BROWSER=false",
         "# Free-tier queues can stall; fail over to the next model after 45s.",

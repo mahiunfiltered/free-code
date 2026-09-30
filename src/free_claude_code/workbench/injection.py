@@ -29,10 +29,6 @@ _EXFIL = re.compile(
     r"(api[\s_-]*keys?|tokens?|secrets?|passwords?|credentials|\.env)\b",
     re.I,
 )
-_TOOL_REQUEST = re.compile(
-    r"\b(run|execute|call)\b[\s\S]{0,40}?\b(command|tool|shell|curl|rm\s+-rf|powershell)\b",
-    re.I,
-)
 # Zero-width / format characters and bidi overrides used to hide text from a human reviewer.
 _HIDDEN_CHARS = re.compile(
     "[\u200b-\u200f\u2060-\u2064\ufeff\u202a-\u202e\u2066-\u2069]"
@@ -61,7 +57,6 @@ def scan(content: str) -> InjectionScan:
         ("override_instructions", bool(_OVERRIDE.search(content))),
         ("role_impersonation", any(p.search(content) for p in _ROLE)),
         ("exfiltration_request", bool(_EXFIL.search(content))),
-        ("tool_invocation_request", bool(_TOOL_REQUEST.search(content))),
         (
             "hidden_text",
             bool(

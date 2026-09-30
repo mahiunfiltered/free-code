@@ -158,6 +158,9 @@ def workspace_prompt(cwd: str) -> str:
         f"The user's project folder is: {cwd}",
         "Create, read, and edit files inside this folder unless the user names another path.",
         "Prefer absolute paths built from this folder in file tools.",
+        # Open models often glob **/* and flood their context with VCS/dependency files.
+        "When listing or searching files, skip .git, .venv, venv, node_modules, "
+        "__pycache__, dist and build folders unless the user asks about them.",
     ]
     if os.name == "nt":
         lines.append(
