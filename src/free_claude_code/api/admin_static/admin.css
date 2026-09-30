@@ -1353,3 +1353,37 @@ textarea:focus-visible,
     background: rgba(245, 246, 248, 0.97);
   }
 }
+
+/* NVIDIA model slots */
+.nvidia-rows {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.nvidia-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.nvidia-row input[type="text"],
+.nvidia-row input[type="password"] {
+  min-width: 0;
+  width: 100%;
+}
+
+.nvidia-default-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .nvidia-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}

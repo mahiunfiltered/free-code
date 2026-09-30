@@ -22,82 +22,95 @@ Write-Host ""
 Write-Host "  Starting Claude (Free Claude Code)" -ForegroundColor Cyan
 Write-Host "  ----------------------------------" -ForegroundColor Cyan
 
-# 0. First-run setup on a fresh PC: uv (Python + dependencies), Claude Code, starter model config.
+# 0. Check every dependency: install what is missing, skip what is already present.
 function Install-FromWeb([string]$Name, [string]$Url) {
-    Write-Status $Name "installing (first run only)..." Yellow
+    Write-Status $Name "missing - installing..." Yellow
     powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $Url | iex"
     foreach ($bin in "$env:USERPROFILE\.local\bin", "$env:USERPROFILE\.cargo\bin") {
         if (Test-Path $bin) { $env:Path = "$bin;$env:Path" }
     }
 }
 
-if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    Install-FromWeb "uv" "https://astral.sh/uv/install.ps1"
-}
-if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    Write-Status "uv" "install failed - see https://docs.astral.sh/uv/" Red
+function Stop-Setup([string]$Name, [string]$Help) {
+    Write-Status $Name "install failed - $Help" Red
     Read-Host "  Press Enter to close"
     exit 1
 }
-Write-Status "Python + packages" "checking (first run downloads ~1-3 min)..." Cyan
+
+# uv (manages Python 3.14 and the app's packages)
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    Write-Status "uv" "found - skipped" Green
+} else {
+    Install-FromWeb "uv" "https://astral.sh/uv/install.ps1"
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { Stop-Setup "uv" "see https://docs.astral.sh/uv/" }
+    Write-Status "uv" "installed" Green
+}
+
+# Python + packages: uv sync is a quick no-op when everything is already installed.
+$venv = Join-Path $scriptDir ".venv"
+$hadVenv = Test-Path $venv
+if (-not $hadVenv) { Write-Status "Python + packages" "missing - installing (1-3 min)..." Yellow }
 Push-Location $scriptDir
 uv sync --quiet
 $syncOk = $LASTEXITCODE -eq 0
 Pop-Location
-if (-not $syncOk -and (Test-Path (Join-Path $scriptDir ".venv"))) {
+if ($syncOk) {
+    Write-Status "Python + packages" $(if ($hadVenv) { "found - up to date" } else { "installed" }) Green
+} elseif ($hadVenv) {
     # Usually a running server holding files open; the existing environment still works.
     Write-Status "Python + packages" "update skipped (server running?) - using existing install" Yellow
-} elseif (-not $syncOk) {
-    Write-Status "Python + packages" "uv sync failed (see output above)" Red
-    Read-Host "  Press Enter to close"
-    exit 1
 } else {
-    Write-Status "Python + packages" "ready" Green
+    Stop-Setup "Python + packages" "see the uv output above"
 }
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    # Claude Code on Windows runs its shell tools through Git Bash.
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Status "Git" "installing (first run only)..." Yellow
-        winget install --id Git.Git -e --silent --accept-package-agreements --accept-source-agreements | Out-Null
-        $env:Path = "$env:ProgramFiles\Git\cmd;$env:Path"
-    } else {
-        Write-Status "Git" "missing - install from https://git-scm.com/download/win" Yellow
-    }
+# Git (Claude Code on Windows runs its shell tools through Git Bash)
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    Write-Status "Git" "found - skipped" Green
+} elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+    Write-Status "Git" "missing - installing..." Yellow
+    winget install --id Git.Git -e --silent --accept-package-agreements --accept-source-agreements | Out-Null
+    $env:Path = "$env:ProgramFiles\Git\cmd;$env:Path"
+    Write-Status "Git" $(if (Get-Command git -ErrorAction SilentlyContinue) { "installed" } else { "install failed - https://git-scm.com/download/win" }) Yellow
+} else {
+    Write-Status "Git" "missing - install from https://git-scm.com/download/win" Yellow
 }
-if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-    Install-FromWeb "Claude Code" "https://claude.ai/install.ps1"
-}
+
+# Claude Code (the agent engine behind the chat window)
 if (Get-Command claude -ErrorAction SilentlyContinue) {
-    Write-Status "Claude Code" "ready" Green
+    Write-Status "Claude Code" "found - skipped" Green
 } else {
-    Write-Status "Claude Code" "install failed - see https://docs.claude.com/claude-code" Red
+    Install-FromWeb "Claude Code" "https://claude.ai/install.ps1"
+    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { Stop-Setup "Claude Code" "see https://docs.claude.com/claude-code" }
+    Write-Status "Claude Code" "installed" Green
 }
 
+# Starter model config (NVIDIA NIM). Students only add their API key on the setup page.
 $fccDir = Join-Path $env:USERPROFILE ".fcc"
 $starterEnv = Join-Path $fccDir ".env"
-if (-not (Test-Path $starterEnv)) {
-    # Starter models (NVIDIA NIM). Students only add their API key on the setup page.
+if (Test-Path $starterEnv) {
+    Write-Status "Model config" "found - skipped" Green
+} else {
     New-Item -ItemType Directory -Force $fccDir | Out-Null
-    $ultra = "nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b"
     $nano = "nvidia_nim/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    $ultra = "nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b"
     $flash = "nvidia_nim/deepseek-ai/deepseek-v4.1-flash"
     $starter = @(
         "# Managed by Free Claude Code.",
         "# Edit settings in /admin when possible.",
         "FCC_CONFIG_SCHEMA=1",
-        "MODEL=`"$ultra`"",
-        "MODEL_OPUS=`"$ultra`"",
-        "MODEL_SONNET=`"$ultra`"",
+        "MODEL=`"$nano`"",
+        "MODEL_FABLE=`"$nano`"",
+        "MODEL_OPUS=`"$nano`"",
+        "MODEL_SONNET=`"$nano`"",
         "MODEL_HAIKU=`"$nano`"",
-        "MODEL_FALLBACKS=`"$nano,$flash`"",
-        "CHAT_MODELS=`"$ultra,$nano,$flash,nvidia_nim/moonshotai/kimi-k3,nvidia_nim/z-ai/glm-5.3`"",
+        "MODEL_FALLBACKS=`"$ultra,$flash`"",
+        "CHAT_MODELS=`"$nano,$ultra,$flash,nvidia_nim/moonshotai/kimi-k3,nvidia_nim/z-ai/glm-5.3`"",
         "FCC_OPEN_BROWSER=false",
         "# Free-tier queues can stall; fail over to the next model after 45s.",
         "HTTP_FIRST_BYTE_TIMEOUT=45"
     )
     [IO.File]::WriteAllText($starterEnv, ($starter -join "`n") + "`n")
-    Write-Status "Model config" "starter config created" Green
+    Write-Status "Model config" "created (default: Nemotron 3 Nano)" Green
 }
 
 # 1. Ollama

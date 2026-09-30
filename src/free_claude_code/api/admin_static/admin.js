@@ -105,6 +105,7 @@ async function load() {
   await hydrateModelOptions();
   await refreshLocalStatus();
   await loadPoolLabels();
+  await loadNvidiaModels();
   updateDirtyState();
   showMessage("");
 }
@@ -1856,6 +1857,75 @@ document.addEventListener("pointerdown", (event) => {
     if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();
   });
 });
+
+// ---- NVIDIA model slots ----
+
+async function loadNvidiaModels() {
+  const { slots, max_slots: max } = await api("/admin/api/nvidia-models");
+  const box = byId("nvidiaRows");
+  box.innerHTML = "";
+  for (let i = 0; i < max; i += 1) {
+    const slot = slots[i] || {};
+    const row = el("div", "nvidia-row");
+    const model = el("input");
+    model.type = "text";
+    model.className = "nvidia-model";
+    model.placeholder = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning";
+    model.value = slot.model || "";
+    model.setAttribute("aria-label", `Model id ${i + 1}`);
+    const key = el("input");
+    key.type = "password";
+    key.className = "nvidia-key";
+    key.autocomplete = "off";
+    key.placeholder = "nvapi-… (leave blank to keep saved key)";
+    key.setAttribute("aria-label", `API key ${i + 1}`);
+    const radio = el("input");
+    radio.type = "radio";
+    radio.name = "nvidiaDefault";
+    radio.className = "nvidia-default";
+    radio.checked = Boolean(slot.default);
+    const radioLabel = el("label", "nvidia-default-label");
+    radioLabel.append(radio, " Default");
+    const clear = el("button", "ghost-button", "Clear");
+    clear.type = "button";
+    clear.setAttribute("aria-label", `Clear row ${i + 1}`);
+    clear.addEventListener("click", () => {
+      model.value = "";
+      key.value = "";
+      radio.checked = false;
+      tag.hidden = true;
+    });
+    const tag = el("span", "status-pill ok", "key saved");
+    tag.hidden = !(slot.model && slot.has_key);
+    row.append(model, key, tag, radioLabel, clear);
+    box.appendChild(row);
+  }
+}
+
+async function saveNvidiaModels() {
+  const slots = [...document.querySelectorAll("#nvidiaRows .nvidia-row")].map((row) => ({
+    model: row.querySelector(".nvidia-model").value.trim(),
+    key: row.querySelector(".nvidia-key").value.trim() || null,
+    default: row.querySelector(".nvidia-default").checked,
+  }));
+  try {
+    const result = await api("/admin/api/nvidia-models", {
+      method: "POST",
+      body: JSON.stringify({ slots }),
+    });
+    if (!result.applied) {
+      showMessage((result.errors || []).join("; ") || "Could not save models.", "error");
+      return;
+    }
+    await load();
+    showMessage("NVIDIA models saved.", "ok");
+  } catch (error) {
+    showMessage(`Could not save models: ${error.message}`, "error");
+  }
+}
+
+byId("nvidiaSave").addEventListener("click", saveNvidiaModels);
+
 
 load().catch((error) => {
   showMessage(error.message, "error");

@@ -16,7 +16,18 @@ from free_claude_code.application.connected_accounts import (
 )
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
+from free_claude_code.config.admin.nvidia_slots import (
+    MAX_SLOTS,
+    POOL_ENV,
+    SlotInput,
+    current_slots,
+    parse_pool,
+    plan_update,
+    store_pool,
+)
+from free_claude_code.config.admin.state import ConfigInputValue
 from free_claude_code.config.admin.values import load_config_response, load_value_state
+from free_claude_code.config.loader import resolve_settings_snapshot
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
@@ -124,11 +135,66 @@ async def apply_admin_config(
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    result = await services.admin.apply_admin_config(_filtered_values(payload.values))
+    return await _apply(_filtered_values(payload.values), background_tasks, services)
+
+
+async def _apply(
+    values: Mapping[str, ConfigInputValue],
+    background_tasks: BackgroundTasks,
+    services: ApiServices,
+) -> JsonObject:
+    result = await services.admin.apply_admin_config(values)
     restart = result.get("restart")
     if isinstance(restart, dict) and restart.get("automatic"):
         background_tasks.add_task(services.admin.request_restart)
     return result
+
+
+class NvidiaSlotPayload(BaseModel):
+    model: str = Field(default="", max_length=300)
+    key: str | None = Field(default=None, max_length=16_384)
+    default: bool = False
+
+
+class NvidiaModelsPayload(BaseModel):
+    slots: list[NvidiaSlotPayload] = Field(default_factory=list, max_length=32)
+
+
+@router.get("/admin/api/nvidia-models")
+async def get_nvidia_models(request: Request):
+    require_loopback_admin(request)
+    settings = resolve_settings_snapshot().settings
+    return _no_store(
+        {
+            "slots": current_slots(
+                settings.chat_models,
+                settings.model,
+                bool(settings.nvidia_nim_api_keys or settings.nvidia_nim_api_key),
+            ),
+            "max_slots": MAX_SLOTS,
+        }
+    )
+
+
+@router.post("/admin/api/nvidia-models")
+async def save_nvidia_models(
+    payload: NvidiaModelsPayload,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    settings = resolve_settings_snapshot().settings
+    old_pool = parse_pool(settings.nvidia_nim_api_keys)
+    try:
+        updates, pool = plan_update(
+            [SlotInput(s.model, s.key, s.default) for s in payload.slots], old_pool
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if pool != old_pool:
+        updates[POOL_ENV] = store_pool(pool, load_value_state()[POOL_ENV].value)
+    return _no_store(await _apply(updates, background_tasks, services))
 
 
 @router.get("/admin/api/status")

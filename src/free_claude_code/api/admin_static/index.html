@@ -29,6 +29,20 @@
 
         <div id="adminViews" class="admin-views">
           <section id="view-providers" class="admin-view active" data-view="providers">
+            <section id="nvidiaModelsSection" class="provider-strip" aria-label="NVIDIA models">
+              <div class="strip-header">
+                <div>
+                  <h3>NVIDIA models</h3>
+                  <p>
+                    Paste a model id from build.nvidia.com and an API key. NVIDIA keys work
+                    for every model; all keys join one failover pool. The Default model
+                    answers first; if it fails, the others are tried in order.
+                  </p>
+                </div>
+              </div>
+              <div id="nvidiaRows" class="nvidia-rows"></div>
+              <button id="nvidiaSave" class="primary-button" type="button">Save models</button>
+            </section>
             <section
               id="connectedAccountsSection"
               class="provider-strip"
