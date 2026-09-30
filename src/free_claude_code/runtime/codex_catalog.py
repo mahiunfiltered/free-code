@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Publish the application model inventory for Codex clients."""
 
 from pathlib import Path

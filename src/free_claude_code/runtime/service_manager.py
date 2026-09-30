@@ -1,16 +1,12 @@
-from __future__ import annotations
-
 """Service lifecycle manager for long-running background servers (e.g. fcc-server).
 
 Ensures background services are started asynchronously, checked for health readiness,
 and never block finite orchestration workflows.
 """
 
-import subprocess
-import sys
 import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from free_claude_code.core.process_manager import (
     ProcessKind,
@@ -102,7 +98,9 @@ class BackgroundServiceManager:
             health_url=health_url,
             is_ready=ready,
             startup_seconds=time.time() - start_time,
-            error=None if ready else f"Service did not become ready within {startup_timeout}s",
+            error=None
+            if ready
+            else f"Service did not become ready within {startup_timeout}s",
         )
         self._services[name] = status
         return status
@@ -113,9 +111,9 @@ class BackgroundServiceManager:
 
     def stop_service(self, name: str) -> None:
         """Stops a background service."""
-        if status := self._services.pop(name, None):
-            if status.pid > 0:
-                self.process_manager.terminate_tree(status.pid)
+        status = self._services.pop(name, None)
+        if status is not None and status.pid > 0:
+            self.process_manager.terminate_tree(status.pid)
 
     def stop_all(self) -> None:
         """Stops all running background services."""

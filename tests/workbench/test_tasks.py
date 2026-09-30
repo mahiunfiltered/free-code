@@ -100,13 +100,24 @@ def test_evidence_only_from_verifying(tasks: TaskStore):
 
 def test_illegal_transitions(tasks: TaskStore):
     task_id = tasks.create("s", "/r")
-    with pytest.raises(TransitionError):
-        tasks.transition(task_id, "RUNNING")
+    for skipped in ("VERIFYING", "COMPLETED", "REQUIREMENTS_LOCKED"):
+        with pytest.raises(TransitionError):
+            tasks.transition(task_id, skipped)
     with pytest.raises(KeyError):
         tasks.transition("nope", "CANCELLED")
     tasks.transition(task_id, "CANCELLED", "user stopped")
     with pytest.raises(TransitionError):
         tasks.transition(task_id, "FAILED")
+
+
+def test_ultra_direct_run_completes_without_a_verification_claim(tasks: TaskStore):
+    task_id = tasks.create("s", "/r")
+    tasks.transition(task_id, "RUNNING", "direct")  # Ultra: no contract to lock
+    tasks.transition(task_id, "COMPLETED")
+    assert tasks.get(task_id).status == "COMPLETED"
+    with pytest.raises(TransitionError):  # terminal
+        tasks.transition(task_id, "FAILED")
+    assert tasks.close_interrupted("server restarted") == []
 
 
 def test_failure_recovery_loop_and_needs_review(tasks: TaskStore):
@@ -175,3 +186,37 @@ def test_export_json_and_markdown(tasks: TaskStore):
         md.startswith("# Evidence package: VERIFIED")
         and "| M1 | must | do x | covered |" in md
     )
+
+
+def test_close_interrupted_settles_runs_that_died_with_the_server(tasks: TaskStore):
+    running = to_verifying(tasks)
+    fresh = tasks.create("s1", "/p")
+    blocked = tasks.create("s1", "/p")
+    tasks.transition(blocked, "INTENT_COMPILED")
+    tasks.transition(blocked, "BLOCKED_FOR_CLARIFICATION")
+    failed = to_verifying(tasks)
+    tasks.record_evidence(failed, package("failed", "failed"))
+    review = to_verifying(tasks)
+    tasks.record_evidence(review, package("needs_review", "missing"))
+    done = to_verifying(tasks)
+    tasks.record_evidence(done, package())
+
+    closed = tasks.close_interrupted("server restarted")
+
+    assert sorted(closed) == sorted(
+        [
+            (running, "VERIFYING", "FAILED"),
+            (fresh, "RECEIVED", "FAILED"),
+            (blocked, "BLOCKED_FOR_CLARIFICATION", "FAILED"),
+            (failed, "FAILED_VERIFICATION", "RECOVERY_REQUIRED"),
+        ]
+    )
+    assert tasks.get(review).status == "RECOVERY_REQUIRED"  # untouched
+    assert tasks.get(done).status == "VERIFIED"
+    last = tasks.events(running)[-1]
+    assert last.payload == {
+        "from": "VERIFYING",
+        "to": "FAILED",
+        "reason": "server restarted",
+    }
+    assert tasks.close_interrupted("again") == []

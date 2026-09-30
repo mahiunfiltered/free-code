@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Block state for OpenAI Responses streaming assembly."""
 
 from dataclasses import dataclass, field

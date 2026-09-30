@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Errors and error envelopes for OpenAI Responses compatibility."""
 
 from typing import Any

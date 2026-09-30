@@ -1,17 +1,14 @@
-from __future__ import annotations
-
 """Sub-agent worker pool for concurrent task execution."""
 
 import asyncio
 import time
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
 from typing import Any
 
 from free_claude_code.core.recovery import BoundedRecoveryEngine
 from free_claude_code.core.watchdog import ActivityKind, AntiStagnationWatchdog
 from free_claude_code.orchestrator.conflict_manager import ConflictManager
-from free_claude_code.orchestrator.models import AgentRole, Task, TaskState
+from free_claude_code.orchestrator.models import Task, TaskState
 
 
 class WorkerPool:
@@ -43,7 +40,9 @@ class WorkerPool:
             self._active_tasks[task.task_id] = task
 
         # Wait for file/path scope lock if scope paths are specified
-        while task.scope_paths and not self.conflict_manager.can_acquire_scope(task.task_id, task.scope_paths):
+        while task.scope_paths and not self.conflict_manager.can_acquire_scope(
+            task.task_id, task.scope_paths
+        ):
             task.status = TaskState.WAITING
             await asyncio.sleep(0.5)
 
@@ -53,7 +52,7 @@ class WorkerPool:
         async with self._semaphore:
             task.status = TaskState.RUNNING
             task.start_time = time.time()
-            act = self.watchdog.register_activity(
+            self.watchdog.register_activity(
                 activity_id=task.task_id,
                 kind=ActivityKind.WORKER_TASK,
                 description=f"{task.role.value}: {task.name}",
@@ -63,7 +62,9 @@ class WorkerPool:
             try:
                 # Execute with timeout and bounded recovery
                 async def _run():
-                    res = await asyncio.wait_for(task_coro_fn(task), timeout=timeout_seconds)
+                    res = await asyncio.wait_for(
+                        task_coro_fn(task), timeout=timeout_seconds
+                    )
                     return res
 
                 result = await self.recovery_engine.execute_with_recovery(
@@ -73,7 +74,7 @@ class WorkerPool:
                 task.result = result
                 task.status = TaskState.COMPLETED
                 task.end_time = time.time()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 task.status = TaskState.FAILED
                 task.error = f"Task timed out after {timeout_seconds}s"
                 task.end_time = time.time()

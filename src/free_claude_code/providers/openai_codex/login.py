@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """OpenAI browser and device authorization flows."""
 
 import asyncio

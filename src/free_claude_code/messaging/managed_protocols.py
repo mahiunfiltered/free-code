@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Protocols for messaging-owned managed Claude sessions."""
 
 from collections.abc import AsyncGenerator

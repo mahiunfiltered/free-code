@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Context optimizer for task-scoped prompt generation.
 
 Reduces model latency, prompt bloat, and token overhead by extracting only
@@ -7,8 +5,8 @@ the relevant interfaces, signatures, and file snippets required for a specific t
 """
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from free_claude_code.core.repo_indexer import FileIndexEntry, get_repo_indexer
 
@@ -66,9 +64,11 @@ class ContextOptimizer:
                 snippet += f"Imports: {', '.join(entry.imports[:10])}\n"
 
             # Read head of file if small
-            if entry.size_bytes < 50_000 and (total_chars + len(snippet) < max_tokens * 3):
+            if entry.size_bytes < 50_000 and (
+                total_chars + len(snippet) < max_tokens * 3
+            ):
                 try:
-                    with open(entry.path, "r", encoding="utf-8", errors="ignore") as fp:
+                    with open(entry.path, encoding="utf-8", errors="ignore") as fp:
                         lines = fp.readlines()
                         head = "".join(lines[:30])
                         snippet += f"```\n{head}\n```\n"

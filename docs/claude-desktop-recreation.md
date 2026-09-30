@@ -31,6 +31,12 @@ servers, skills, slash commands, subagents, and plan mode all come from the
 real Claude Code CLI. The app only decides **how to show** Claude Code's events
 and **how to answer** its questions, such as "may I run this command?".
 
+On top of plain chat, the app adds a **verified execution workbench** (section
+5). **Verified** and **Parallel** run modes check Claude's work against real
+evidence before calling it done. Session settings add permission presets and
+budgets, and Admin gains views for key pools, usage, secrets, audit, and
+policy. The full reference is [workbench.md](workbench.md).
+
 ---
 
 ## 2. Architecture
@@ -285,6 +291,13 @@ The backend adds a few events of its own to the stream:
 | `fcc_replay_end` | End of the replay backlog. Live events follow. |
 | `fcc_raw` | A stdout line that was not valid JSON |
 | `fcc_exit` | The process exited: `{code, stderr}` (last 8,000 characters of stderr) |
+| `fcc_task`, `fcc_intent`, `fcc_checkpoint`, `fcc_verification_started`, `fcc_verification_check`, `fcc_verification`, `fcc_recovery`, `fcc_orchestration` | Verified and Parallel run progress (section 5, [workbench.md §2](workbench.md#2-task-lifecycle)) |
+| `fcc_budget` | A session budget ran out and the turn was interrupted |
+| `fcc_usage` | Token, request, and failover totals for this Claude session, after each result |
+| `fcc_injection` | A tool result looked like a prompt injection; the tool card gets an **Injection?** badge |
+
+The snapshot in `fcc_state` also carries `policy_preset`, `budget`, and
+`usage` `{input_tokens, output_tokens, turns, elapsed_s}`.
 
 ### Replay, reconnects, and cleanup
 
@@ -357,8 +370,8 @@ Windows it adds drive roots. Changing folders starts a new chat in that folder.
 
 ### Permission modes
 
-`PERMISSION_MODES` in `interactive.py` is
-`("default", "acceptEdits", "plan", "bypassPermissions", "auto")`:
+`PERMISSION_MODES` in `core/claude_permission_modes.py` is, least to most strict,
+`("bypassPermissions", "auto", "acceptEdits", "default", "dontAsk", "plan")`:
 
 | Mode | UI label | Behavior (summary of the official docs) |
 |---|---|---|
@@ -399,9 +412,95 @@ chosen label(s) joined with `", "`:
 
 ---
 
-## 5. Setup for students
+## 5. The verified workbench in the app
 
-### 5.1 Install FCC, uv, and the Claude Code CLI
+This section covers what you see in the UI. [workbench.md](workbench.md)
+explains how each part works.
+
+### Run modes: Chat, Verified, Parallel
+
+The **run mode chip** next to the permission chip (`runModeBtn`,
+`renderRunModeMenu()` in `chat.js`) chooses how the next message is sent. It
+posts `POST /chat/api/live/<id>/messages` with
+`{"content": ..., "mode": "normal"|"verified"|"parallel", "strategy": ...}`.
+The choice is saved in `localStorage` (`fcc.runMode`, `fcc.strategy`).
+
+| Mode | What happens |
+|---|---|
+| **Chat** (`normal`) | Unchanged: the prompt goes straight to Claude Code. |
+| **Verified** | The prompt is compiled into an **intent contract** (MUST / MUST NOT / PRESERVE / scope). A **git checkpoint** is taken. Claude gets the prompt plus the contract. When it finishes, a **verification gate** runs the project's own typecheck, test, build, and lint commands, a secret scan, a scope check, and intent conformance. A failure produces a bounded **recovery** prompt (at most 3 tries per failure and 8 in total), then verification runs again. Only the gate can mark the task **Verified**. |
+| **Parallel** | The request is split into a task graph of up to 6 nodes. Each node that edits files runs in its own git worktree and branch as a separate headless Claude Code session. The branches are merged in dependency order, and the gate checks the merged result. **Strategy** limits concurrency: Economy 1, Balanced 3, Fastest 6. The folder must be a clean git repo on a branch. |
+
+If the contract is unclear (for example "delete the old data"), the task stops
+in `BLOCKED_FOR_CLARIFICATION`. A **clarify card** then asks the questions and
+posts the answers to `POST /chat/api/tasks/<id>/clarify`.
+
+### Verification panel
+
+The **Verification** button in the top bar (`verifyBtn`, `renderVerify()`)
+opens a side panel with one section per task, newest first. Each section shows:
+
+- a status pill and a disposition banner (**Verified**, **Failed
+  verification**, or **Needs review**) with its blocking reasons,
+- the locked contract (`contractNode()`), and for Parallel runs the task graph
+  (`graphNode()`),
+- every verification attempt with its checks (✓ passed, ✕ failed, ! advisory
+  failure, – skipped), durations, exit codes, and output tails,
+- the **gap matrix**: each requirement id (`M1`, `N1`, `P1`, `X1`) with its
+  evidence and a status of covered, missing, or failed,
+- a timeline of lifecycle events,
+- the actions **Export evidence** (Markdown from
+  `/chat/api/tasks/<id>/evidence`), **Revert task changes** (a scoped revert to
+  the checkpoint, disabled outside git), and **Cancel task**.
+
+Reopened chats load their earlier tasks from
+`GET /chat/api/sessions/<session_id>/tasks` (`loadTaskHistory()`).
+
+### Session settings: policy preset and budgets
+
+The gear button next to the composer (`settingsBtn`, `renderSettings()`) sets
+values that apply when the **next** session starts. An unused warm session
+restarts right away (`applySettings()`).
+
+- **Policy preset**: none, `restricted` (read-only), `workspace` (edit the
+  project; network commands ask), or `privileged` (bypass mode, but the
+  built-in ask/deny rules still apply). The menu lists each preset's rules from
+  `GET /chat/api/policy/presets`. Every preset asks before reading `.env*` or
+  key files, denies writes inside `.git`, asks before destructive commands and
+  `git push`, and denies force push. See the
+  [presets table](workbench.md#7-permission-presets).
+- **Budgets**: max turns, max minutes of busy time, and max output tokens. When
+  a limit is reached, the turn is interrupted and a "Stopped: … limit reached"
+  notice appears (`renderBudget()`). The chat then refuses new messages.
+
+### Endpoint health chip
+
+If a provider has an API key pool, a small chip at the right of the composer bar, next to the context and model chips
+(`healthChip`, `loadHealth()`, polled every 20 s from
+`GET /chat/api/endpoints/summary`) shows, for example,
+`NIM 1/2 keys healthy`. Its colour is green, amber (cooling down or circuit
+open), or red (no healthy key). Clicking it opens Admin. Pools are configured
+with `<KEY_ENV>S="label=key,..."`, for example
+`NVIDIA_NIM_API_KEYS="work=nvapi-...,home=nvapi-..."`. A rate-limited key fails
+over to another key before the first token streams.
+
+### Admin views
+
+`http://127.0.0.1:8082/admin` gains five views (`admin.js`, `admin_static/index.html`):
+
+| View | Shows | API |
+|---|---|---|
+| **Endpoints** | Live health for each provider key: circuit, cooldown, failures, latency. Refreshes every 5 s, with a **Reset** button for each key. | `GET /admin/api/endpoints`, `POST /admin/api/endpoints/{provider}/{label}/reset` |
+| **Usage** | Requests, errors, rate limits, p50/p95 latency, and tokens for each key and each session, plus recent attempts. Windows: 15 min to 7 days. | `GET /admin/api/usage?minutes=` |
+| **Secrets** | Encrypted vault: save, list (names only), delete, and **Move keys** (migrate plaintext `*_API_KEY(S)` to `vault:` references). | `/admin/api/secrets*` |
+| **Audit** | Hash-chained log of permission decisions, verifications, reverts, secret changes, and config applies, with a "Chain verified" or "Tampered at id N" pill. | `GET /admin/api/audit` |
+| **Policy** | The compiled rules of each preset. | `GET /admin/api/policy/presets` |
+
+---
+
+## 6. Setup for students
+
+### 6.1 Install FCC, uv, and the Claude Code CLI
 
 Use the repository installer. It installs `uv` if needed, installs FCC, and
 asks which coding agents to install. **Choose Claude Code.**
@@ -424,18 +523,22 @@ in its own right. Then check that `claude --version` works in a **new**
 terminal. The chat backend looks up `claude` on `PATH` and reports an error if
 it is missing.
 
-### 5.2 Get an NVIDIA NIM API key
+### 6.2 Get an NVIDIA NIM API key
 
 1. Sign in at [build.nvidia.com](https://build.nvidia.com) and create a key at
    [build.nvidia.com/settings/api-keys](https://build.nvidia.com/settings/api-keys).
 2. Treat the key like a password. Never commit it or paste it into a chat.
 
-### 5.3 Configure models in Admin
+### 6.3 Configure models in Admin
 
-Start FCC (see 5.4) and open **http://127.0.0.1:8082/admin**. The default port
+Start FCC (see 6.4) and open **http://127.0.0.1:8082/admin**. The default port
 is `8082`. Change it with `PORT` in `~/.fcc/.env`.
 
-1. Paste your key into **`NVIDIA_NIM_API_KEY`**.
+1. Paste your key into **`NVIDIA_NIM_API_KEY`**. Optional: store it encrypted
+   instead (**Secrets** view, or `fcc-secret set nvidia`) and enter
+   `vault:nvidia` as the value. Add more keys for failover with
+   `NVIDIA_NIM_API_KEYS="label1=key1,label2=key2"`
+   ([workbench.md §10-11](workbench.md#10-credential-vault)).
 2. Set **`MODEL`** (Default Model). Model references use the format
    `provider/model-id`, and for NVIDIA NIM that is
    `nvidia_nim/<publisher>/<model>`.
@@ -474,7 +577,7 @@ gateway id:
 The entry that matches `MODEL` is flagged `default`. Picking it starts `claude`
 with no `--model` flag, so FCC routes the request to `MODEL`.
 
-### 5.4 Launch the app
+### 6.4 Launch the app
 
 Pick one:
 
@@ -490,6 +593,17 @@ Pick one:
   **Providers & Models** opens Admin.
 - **Any OS:** run `fcc-server`, then browse to
   **http://127.0.0.1:8082/chat**.
+- **Windows, everything at once:** double-click `Start-All.bat` (repo root). It
+  runs `Start-All.ps1`, which starts Ollama (`ollama serve`, port 11434) if it
+  is installed, then an NVIDIA proxy at `~/.nvidia-proxy/proxy.py` (port 8787)
+  if that file exists, then calls `Claude-Desktop.ps1` for the FCC server and
+  the app window. Servers that are already listening are left alone.
+  `Stop-All.bat` / `Stop-All.ps1` closes the app window (only browser processes
+  that use the `~/.fcc/chat-window` profile), then kills the process tree that
+  owns the FCC port (from `PORT` in `~/.fcc/.env`, default 8082), including its
+  `claude` chat processes, plus any `fcc-server` or `fcc-desktop` process. It
+  also stops whatever listens on 8787 and 11434 and the Ollama tray app. It
+  stops them even if you started them yourself.
 
 `cli/app_window.py` → `open_app_window()` looks for Edge or Chrome on Windows,
 Chrome or Edge on macOS, and Chromium, Chrome, or Edge on Linux. It opens the
@@ -497,7 +611,7 @@ URL with `--app=` and `--user-data-dir=`, which gives a window without tabs or
 an address bar and its own taskbar entry. If no such browser is found, it opens
 a normal browser tab.
 
-### 5.5 First chat
+### 6.5 First chat
 
 1. Click the folder chip and choose a small practice project.
 2. Keep **Ask permissions** mode on.
@@ -507,7 +621,7 @@ a normal browser tab.
 
 ---
 
-## 6. Feature map
+## 7. Feature map
 
 | Claude desktop (Code tab) feature | This app | Where |
 |---|---|---|
@@ -534,6 +648,15 @@ a normal browser tab.
 | Light/dark theme, keyboard shortcuts | Yes (Ctrl+K search, Ctrl+Shift+O new chat) | `wire()` |
 | Standalone window | Chromium `--app` window | `app_window.py`, `Claude-Desktop.ps1` |
 | Provider retry notice | Yes (`system/api_retry`) | `handleSystem` |
+| *FCC extras, not in the Claude desktop app:* | | |
+| Verified run mode (intent contract, verification gate, bounded recovery) | Yes | `RUN_MODES`, `handleTaskEvent`; `workbench/coordinator.py` |
+| Parallel run mode (task graph, worktrees, integration) | Yes | `applyOrchestration`, `graphNode`; `workbench/orchestration/` |
+| Verification panel (checks, gap matrix, evidence export, revert) | Yes | `renderVerify`, `taskSection`, `taskActions` |
+| Session settings (policy preset, budgets) | Yes | `renderSettings`, `applySettings`; `workbench/policy.py` |
+| Endpoint health chip (multi-key pools) | Yes | `loadHealth`, `renderHealth`; `providers/key_pool.py` |
+| Prompt-injection badge on tool output | Yes | `markInjection`; `workbench/injection.py` |
+| Admin: Endpoints, Usage, Secrets, Audit, Policy | Yes | `admin.js`; `api/admin_routes.py` |
+| One-click start/stop of all local servers | Windows | `Start-All.bat`, `Stop-All.bat` |
 
 ### What cannot be recreated
 
@@ -556,15 +679,15 @@ local CLI:
 
 ---
 
-## 7. Security notes
+## 8. Security notes
 
 - **Local only.** Every `/chat` route depends on `require_loopback_admin`
-  (`api/admin_routes.py`). The client address must be a loopback address. If an
-  `Origin` header is present, it must also be a loopback host, which stops
-  other websites from driving the app from your browser. Requests *without* an
-  `Origin` header (curl, scripts) from the same machine are allowed, and so is
-  any page served from **another localhost port**. Do not run untrusted local
-  web servers while FCC is running.
+  (`api/admin_routes.py`) and `require_same_origin` (`api/chat_routes.py`). The
+  client address and the `Host` header must be loopback, which blocks DNS
+  rebinding. If an `Origin` header is present, it must match `Host` exactly,
+  which stops other websites *and* pages on other localhost ports from driving
+  the app from your browser. Requests *without* an `Origin` header (curl,
+  scripts) from the same machine are still allowed.
 - **The UI can run shell commands.** Anything that can reach `/chat/api/*` can
   start `claude` in any folder and approve its tool calls. Never expose the FCC
   port to a network, for example with `HOST=0.0.0.0` behind a public IP,
@@ -593,10 +716,20 @@ local CLI:
 - **Repository content runs code.** Claude Code loads the project's
   `.claude/settings.json` hooks and `.mcp.json` servers. Only open folders you
   trust.
+- **Verification runs code too.** Verified and Parallel runs execute the
+  project's own test, build, lint, and typecheck commands, with no sandbox.
+- **Policy presets are guard rails, not a sandbox.** Their command rules match
+  the command text Claude writes, so `/bin/rm` or `sh -c "rm ..."` gets past
+  `rm *`. Use a VM for untrusted work. See
+  [workbench.md §16](workbench.md#16-security-notes-and-known-limitations) for
+  the full list of limitations.
+- **Secrets.** Keep keys in the vault (`fcc-secret set <name>`, then
+  `KEY=vault:<name>` in `.env`) instead of in plaintext. `fcc-secret migrate`
+  leaves a plaintext backup that you must delete yourself.
 
 ---
 
-## 8. Exercises
+## 9. Exercises
 
 Start easy and work up.
 
@@ -625,7 +758,7 @@ Start easy and work up.
    [README](../README.md) and the existing adapters under
    `src/free_claude_code/providers/`. Configure a second provider, add its
    models to `CHAT_MODELS`, and compare the same task on two models.
-9. **Security review.** Write a short threat model for section 7. What
+9. **Security review.** Write a short threat model for section 8. What
    happens if another program on the machine calls `POST /chat/api/live`?
    Propose a mitigation, such as a per-launch token, and explain the
    trade-offs.
@@ -633,9 +766,38 @@ Start easy and work up.
     that speaks the protocol. Extend it and `tests/cli/test_interactive_chat.py`
     to cover `control_cancel_request`.
 
+Workbench exercises (read [workbench.md](workbench.md) first):
+
+11. **Break the gate on purpose.** In a small git project with a pytest suite,
+    run a Verified task whose prompt says "don't touch `tests/`", and ask for a
+    change that needs a test edit. Find the failed `N1` row in the gap matrix,
+    then trace it in `verification/checks.py` (`_RULES`, `_evaluate()`,
+    `gap_matrix()`). Explain why the disposition is `FAILED_VERIFICATION` and
+    which `fcc_recovery` action follows (hint: `recovery.ASK_USER_CATEGORIES`).
+12. **Stream check results live.** `fcc_verification_check` events are
+    published only after `run_gate()` returns (see the `ponytail:` note in
+    `TaskCoordinator._verify()`). Add a progress callback to `run_gate()`, emit
+    each check as it finishes, and extend `tests/workbench/test_coordinator.py`.
+13. **Better MUST evidence.** A MUST row counts as covered when *any* unit test
+    passes. Design a mapping from requirements to specific tests (for example,
+    tests whose names or changed lines mention the requirement's path tokens).
+    Implement it in `gap_matrix()` and add edge-case tests in
+    `tests/workbench/test_verification_checks.py`. Discuss false positives.
+14. **Watch failover.** Configure `NVIDIA_NIM_API_KEYS` with two keys, one of
+    them invalid on purpose. Send a prompt and watch the Admin **Endpoints**
+    view (the bad key goes `OPEN` with `auth_failed`) and the **Usage** view
+    (`failover_from`). Map what you see to `record_failure()` in
+    `providers/endpoint_health.py`, then reset the key from Admin.
+15. **Tamper with the audit log.** Stop FCC and copy `~/.fcc/fcc.db`. On the
+    *copy*, drop the `audit_log_no_update` trigger and change one row's
+    `outcome` with `sqlite3`. Open the copy with `AuditLog(Store(path))` and call
+    `verify()`. Then delete the newest row instead and explain why `verify()`
+    still returns `True`. Propose an external anchor, such as publishing the
+    head hash, that would catch that.
+
 ---
 
-## 9. File map
+## 10. File map
 
 | File | Role |
 |---|---|
@@ -644,9 +806,9 @@ Start easy and work up.
 | `src/free_claude_code/cli/managed/project_files.py` | `@`-mention file search (`git ls-files` or a walk) and the folder browser |
 | `src/free_claude_code/cli/managed/claude.py` | `build_managed_claude_env()`: environment that points `claude` at the proxy |
 | `src/free_claude_code/cli/claude_env.py` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, gateway model discovery flags |
-| `src/free_claude_code/api/chat_routes.py` | All `/chat` routes (page, assets, sessions, files, dirs, models, transcripts, live, events SSE, messages, control, permissions) |
-| `src/free_claude_code/api/ports.py` | `ChatRuntimePort` / `ChatSessionPort` protocols the routes depend on |
-| `src/free_claude_code/api/admin_routes.py` | `require_loopback_admin` (loopback client and Origin check) |
+| `src/free_claude_code/api/chat_routes.py` | All `/chat` routes (page, assets, sessions, files, dirs, models, transcripts, live, events SSE, messages, control, permissions, tasks, policy presets, endpoint summary) and `require_same_origin` |
+| `src/free_claude_code/api/ports.py` | `ChatRuntimePort` / `ChatSessionPort` / `WorkbenchPort` protocols the routes depend on |
+| `src/free_claude_code/api/admin_routes.py` | `require_loopback_admin` (loopback client and Origin check); endpoints, usage, secrets, audit, and policy admin routes |
 | `src/free_claude_code/api/model_catalog.py` | `build_chat_models_response()` for the model picker |
 | `src/free_claude_code/core/gateway_model_ids.py` | `anthropic/<provider>/<model>` and no-thinking id encoding |
 | `src/free_claude_code/config/settings.py` | `MODEL`, `MODEL_FALLBACKS`, `CHAT_MODELS`, `PORT` settings |
@@ -655,10 +817,27 @@ Start easy and work up.
 | `src/free_claude_code/api/chat_static/index.html` | Page layout (sidebar, thread, composer, dialogs) |
 | `src/free_claude_code/api/chat_static/chat.js` | Client: SSE, event rendering, Markdown, cards, menus, folder picker |
 | `src/free_claude_code/api/chat_static/chat.css` | Styling and light/dark themes |
-| `src/free_claude_code/runtime/application.py` | Creates `InteractiveClaudeSessions` and stops all sessions on shutdown |
+| `src/free_claude_code/runtime/application.py`, `runtime/bootstrap.py` | Create `InteractiveClaudeSessions`, the `Store`, the `EndpointPool`, and `WorkbenchService`; stop all sessions on shutdown |
 | `src/free_claude_code/cli/app_window.py` | `open_app_window()`: Chromium `--app` window |
 | `src/free_claude_code/cli/desktop.py`, `cli/desktop_tray.py` | Desktop shell and tray ("Open Claude", "Providers & Models") |
 | `src/free_claude_code/cli/commands.py` | `open_chat_when_ready()`, `schedule_open_chat_window()` |
 | `src/free_claude_code/config/server_urls.py` | `local_chat_url()` |
 | `Claude-Desktop.bat`, `Claude-Desktop.ps1` | Windows one-click launcher from a repo checkout |
+| `Start-All.bat`/`.ps1`, `Stop-All.bat`/`.ps1` | Start or stop Ollama, the NVIDIA proxy, the FCC server, and the app window together |
+| `src/free_claude_code/workbench/coordinator.py` | `TaskCoordinator`: Verified and Parallel runs on a live chat session, `fcc_task`/`fcc_verification*` events |
+| `src/free_claude_code/workbench/service.py` | `WorkbenchService` (tasks, secrets, audit, chat observer), `launch_policy()` |
+| `src/free_claude_code/workbench/intent.py` | Intent contract compiler (`compile_intent`, `render_contract`) |
+| `src/free_claude_code/workbench/verification/` | `profile.py` (project commands, check plan), `checks.py` (runners, gap matrix), `failures.py` (parsers, fingerprints), `gate.py` (`run_gate`, dispositions, evidence) |
+| `src/free_claude_code/workbench/recovery.py` | Recovery ladder and recovery prompts |
+| `src/free_claude_code/workbench/checkpoints.py` | Git snapshot checkpoints and scoped revert |
+| `src/free_claude_code/workbench/tasks.py` | `TaskStore`: lifecycle, evidence, and events in SQLite |
+| `src/free_claude_code/workbench/orchestration/` | Parallel mode: `planner.py`, `graph.py`, `leases.py`, `worktrees.py`, `runner.py`, `integration.py` |
+| `src/free_claude_code/workbench/policy.py` | Permission presets compiled to `--settings` |
+| `src/free_claude_code/workbench/audit.py`, `injection.py`, `memory.py`, `model_client.py` | Audit hash chain, injection scan, verified solution memory, helper model client |
+| `src/free_claude_code/providers/key_pool.py`, `endpoint_health.py`, `usage_records.py` | Multi-key failover, circuit breaker, usage rows |
+| `src/free_claude_code/config/provider_keys.py` | Parses `<KEY_ENV>S` key pools |
+| `src/free_claude_code/core/vault.py`, `cli/secret_command.py`, `config/loader.py` | Credential vault, `fcc-secret`, `vault:<name>` resolution |
+| `src/free_claude_code/core/storage.py` | Shared SQLite `Store` (`~/.fcc/fcc.db`) |
+| `src/free_claude_code/api/admin_static/admin.js` | Admin UI, including the Endpoints, Usage, Secrets, Audit, and Policy views |
+| `tests/workbench/` | Workbench tests, including the `fake_claude_coder.py` and `fake_claude_worker.py` fakes |
 | `tests/cli/fake_claude_stream.py`, `tests/cli/test_interactive_chat.py`, `tests/api/test_chat_routes.py` | Protocol fake and tests |

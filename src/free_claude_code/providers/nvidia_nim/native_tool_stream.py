@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Normalize native MiniMax-M3 tool markup exposed by NVIDIA NIM."""
 
 import json

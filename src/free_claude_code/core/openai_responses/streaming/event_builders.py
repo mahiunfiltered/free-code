@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """OpenAI Responses SSE event builders."""
 
 from typing import Any

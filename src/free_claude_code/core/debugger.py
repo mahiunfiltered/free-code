@@ -1,20 +1,13 @@
-from __future__ import annotations
-
 """Autonomous agent debugger and automated error diagnosis loop.
 
 Implements deep root-cause diagnosis, targeted repair proposal, automated application,
 and verification with a strict 3-attempt escalation limit.
 """
 
-import os
-import re
-import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Sequence
-
-from free_claude_code.core.recovery import ErrorSeverity, classify_error
 
 
 class FailureClass(StrEnum):
@@ -60,7 +53,9 @@ class DebuggingSession:
     task_id: str
     attempts: int = 0
     max_attempts: int = 3
-    history: list[tuple[DiagnosticContext, RepairPlan, bool]] = field(default_factory=list)
+    history: list[tuple[DiagnosticContext, RepairPlan, bool]] = field(
+        default_factory=list
+    )
     is_resolved: bool = False
     escalation_report: str | None = None
 
@@ -68,23 +63,44 @@ class DebuggingSession:
 class AutonomousDebugger:
     """Diagnoses runtime and build failures and orchestrates targeted repairs."""
 
-    def classify_failure(self, error_msg: str, stderr: str = "", exit_code: int | None = None) -> FailureClass:
+    def classify_failure(
+        self, error_msg: str, stderr: str = "", exit_code: int | None = None
+    ) -> FailureClass:
         text = f"{error_msg}\n{stderr}".lower()
-        if "access is denied" in text or "permission denied" in text or "eacces" in text:
+        if (
+            "access is denied" in text
+            or "permission denied" in text
+            or "eacces" in text
+        ):
             return FailureClass.PERMISSION_FAILURE
-        if "address already in use" in text or "port" in text and "already in use" in text:
+        if "address already in use" in text or (
+            "port" in text and "already in use" in text
+        ):
             return FailureClass.PORT_CONFLICT
-        if "traceback (most recent call last)" in text or "syntaxerror" in text or "nameerror" in text or "importerror" in text:
+        if (
+            "traceback (most recent call last)" in text
+            or "syntaxerror" in text
+            or "nameerror" in text
+            or "importerror" in text
+        ):
             return FailureClass.PYTHON_EXCEPTION
         if "referenceerror" in text or "typeerror" in text or "node:internal" in text:
             return FailureClass.NODE_EXCEPTION
-        if "failed" in text and ("test" in text or "assert" in text or "pytest" in text):
+        if "failed" in text and (
+            "test" in text or "assert" in text or "pytest" in text
+        ):
             return FailureClass.TEST_FAILURE
         if "powershell" in text or "posh" in text or "term '" in text:
             return FailureClass.POWERSHELL_FAILURE
         if "timed out" in text or "timeout" in text:
             return FailureClass.TIMEOUT
-        if "401" in text or "403" in text or "429" in text or "500" in text or "api" in text:
+        if (
+            "401" in text
+            or "403" in text
+            or "429" in text
+            or "500" in text
+            or "api" in text
+        ):
             return FailureClass.API_FAILURE
         if exit_code is not None and exit_code != 0:
             return FailureClass.SHELL_FAILURE
@@ -102,9 +118,9 @@ class AutonomousDebugger:
         fc = self.classify_failure(error_msg, stderr, exit_code)
         stack = ""
         if "Traceback" in stderr:
-            stack = stderr[stderr.find("Traceback"):]
+            stack = stderr[stderr.find("Traceback") :]
         elif "Traceback" in error_msg:
-            stack = error_msg[error_msg.find("Traceback"):]
+            stack = error_msg[error_msg.find("Traceback") :]
 
         return DiagnosticContext(
             failure_class=fc,
@@ -117,7 +133,9 @@ class AutonomousDebugger:
             target_files=list(target_files),
         )
 
-    def diagnose_and_propose(self, diag: DiagnosticContext, attempt_num: int) -> RepairPlan:
+    def diagnose_and_propose(
+        self, diag: DiagnosticContext, attempt_num: int
+    ) -> RepairPlan:
         fc = diag.failure_class
 
         if fc == FailureClass.PERMISSION_FAILURE:
@@ -142,14 +160,20 @@ class AutonomousDebugger:
             )
 
         if fc == FailureClass.NODE_EXCEPTION:
-            if "Cannot find module" in diag.error_message or "ERR_MODULE_NOT_FOUND" in diag.error_message:
+            if (
+                "Cannot find module" in diag.error_message
+                or "ERR_MODULE_NOT_FOUND" in diag.error_message
+            ):
                 return RepairPlan(
                     diagnosis="Missing Node.js package or unresolved module import.",
                     proposed_action="Run npm/pnpm install or verify relative import path and tsconfig.json.",
                     repair_command="npm install",
                     can_auto_apply=True,
                 )
-            if "SyntaxError" in diag.error_message or "Unexpected token" in diag.error_message:
+            if (
+                "SyntaxError" in diag.error_message
+                or "Unexpected token" in diag.error_message
+            ):
                 return RepairPlan(
                     diagnosis="JavaScript/TypeScript syntax error or JSX transpilation issue.",
                     proposed_action="Check JSX tags, missing closing brackets, or tsconfig jsx setting.",
@@ -179,10 +203,13 @@ class AutonomousDebugger:
             if "NameError" in diag.error_message:
                 return RepairPlan(
                     diagnosis="Forward reference or missing import in Python source.",
-                    proposed_action="Add 'from __future__ import annotations' or import missing type.",
+                    proposed_action="Import the missing name or move the shared type to a neutral module.",
                     can_auto_apply=True,
                 )
-            if "ModuleNotFoundError" in diag.error_message or "ImportError" in diag.error_message:
+            if (
+                "ModuleNotFoundError" in diag.error_message
+                or "ImportError" in diag.error_message
+            ):
                 return RepairPlan(
                     diagnosis="Missing Python module or package dependency.",
                     proposed_action="Install package or update PYTHONPATH.",
@@ -216,8 +243,12 @@ class AutonomousDebugger:
             "History:",
         ]
         for idx, (diag, plan, resolved) in enumerate(session.history, 1):
-            lines.append(f"  Attempt {idx}: {diag.failure_class.value} -> {plan.diagnosis} (Resolved: {resolved})")
-        lines.append("Recommended Human Action: Check environment configuration, credentials, or target paths.")
+            lines.append(
+                f"  Attempt {idx}: {diag.failure_class.value} -> {plan.diagnosis} (Resolved: {resolved})"
+            )
+        lines.append(
+            "Recommended Human Action: Check environment configuration, credentials, or target paths."
+        )
         report = "\n".join(lines)
         session.escalation_report = report
         return report

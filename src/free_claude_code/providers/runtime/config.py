@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Provider configuration construction from neutral catalog metadata."""
 
 from free_claude_code.application.errors import ApplicationUnavailableError
@@ -97,6 +95,8 @@ def build_provider_config(
         http_read_timeout=settings.http_read_timeout,
         http_write_timeout=settings.http_write_timeout,
         http_connect_timeout=settings.http_connect_timeout,
+        http_first_byte_timeout=settings.http_first_byte_timeout,
+        http_stream_idle_timeout=settings.http_stream_idle_timeout,
         proxy=proxy,
         log_raw_sse_events=settings.log_raw_sse_events,
         log_api_error_tracebacks=settings.log_api_error_tracebacks,

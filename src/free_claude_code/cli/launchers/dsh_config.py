@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Process-local DeepSeek Harness configuration for FCC model routing."""
 
 import math

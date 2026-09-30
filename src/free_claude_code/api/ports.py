@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Runtime capabilities consumed by the HTTP API adapter."""
 
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -113,17 +111,28 @@ class EndpointPoolPort(Protocol):
 
 
 class WorkbenchPort(Protocol):
-    """Verified/parallel tasks, policy presets, vault secrets and the audit log.
+    """Verified/parallel/ultra tasks, policy presets, vault secrets and the audit log.
 
     Lookups return ``None``/``False`` for unknown ids; invalid requests raise
     ``InvalidRequestError`` (rendered as HTTP 400).
     """
 
     async def start_task(
-        self, live_id: str, content: JsonValue, *, mode: str, strategy: str
+        self,
+        live_id: str,
+        content: JsonValue,
+        *,
+        mode: str,
+        strategy: str,
+        verify: bool = False,
+        max_parallel: int | None = None,
     ) -> str | None: ...
 
     async def clarify(self, task_id: str, answers: str) -> bool: ...
+
+    async def resume(self, task_id: str, live_id: str | None = None) -> bool: ...
+
+    def project(self, cwd: str) -> JsonObject: ...
 
     def task(self, task_id: str) -> JsonObject | None: ...
 

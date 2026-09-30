@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Discord outbound delivery."""
 
 from collections.abc import Awaitable, Callable

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Limits and defaults for outbound web server tool HTTP."""
 
 from free_claude_code.core.version import package_version

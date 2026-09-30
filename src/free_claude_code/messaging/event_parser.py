@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """CLI event parser for Claude Code CLI output.
 
 This parser emits an ordered stream of low-level events suitable for building a

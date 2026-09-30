@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Minimal lifecycle helpers for composed asynchronous iterators."""
 
 from typing import Protocol, runtime_checkable

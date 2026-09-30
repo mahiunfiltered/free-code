@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Token estimation for Anthropic-compatible requests."""
 
 import json

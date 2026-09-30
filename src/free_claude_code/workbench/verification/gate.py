@@ -15,6 +15,7 @@ evidence, but can never turn a failed row or failed command check into a pass.
 import asyncio
 import hashlib
 import json
+import re
 import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ from typing import Literal, cast
 
 from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.workbench.checkpoints import Checkpoint, TreeDiff, diff_since, git
+from free_claude_code.workbench.ignore import diff_ignore_patterns, split_ignored
 from free_claude_code.workbench.intent import IntentContract, ModelClient
 from free_claude_code.workbench.verification.checks import (
     DEFAULT_OUTPUT_CAP,
@@ -166,6 +168,33 @@ async def _apply_judge(
     return []
 
 
+_DIFF_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
+
+
+def drop_ignored(diff: TreeDiff, patterns: list[str]) -> tuple[TreeDiff, list[str]]:
+    """Remove ignored paths from the files list and the unified diff text."""
+
+    _, ignored = split_ignored([f.path for f in diff.files], patterns)
+    if not ignored:
+        return diff, []
+    skip = set(ignored)
+    kept: list[str] = []
+    dropping = False
+    for line in diff.text.splitlines(keepends=True):
+        header = _DIFF_HEADER.match(line.rstrip("\r\n"))
+        if header:
+            dropping = header.group(2) in skip
+        if not dropping:
+            kept.append(line)
+    filtered = TreeDiff(
+        files=[f for f in diff.files if f.path not in skip],
+        text="".join(kept),
+        stat=diff.stat,
+        tree=diff.tree,
+    )
+    return filtered, ignored
+
+
 def _head(root: str) -> str | None:
     try:
         return git(root, "rev-parse", "-q", "--verify", "HEAD").strip()
@@ -207,6 +236,17 @@ async def run_gate(
             head_now = await asyncio.to_thread(_head, checkpoint.root)
         except (subprocess.CalledProcessError, OSError) as exc:
             warnings.append(f"diff unavailable: {exc}")
+        if diff is not None:
+            patterns, config_warnings = diff_ignore_patterns(profile.root)
+            warnings += config_warnings
+            diff, ignored = drop_ignored(diff, patterns)
+            if ignored:
+                shown = ", ".join(ignored[:10])
+                more = f" (+{len(ignored) - 10} more)" if len(ignored) > 10 else ""
+                warnings.append(
+                    f"ignored {len(ignored)} tool/agent state file(s) in the diff: "
+                    f"{shown}{more}"
+                )
     else:
         warnings.append("no git checkpoint: diff-based checks cannot run")
 

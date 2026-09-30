@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Typed dependency surface for messaging slash commands."""
 
 from dataclasses import dataclass

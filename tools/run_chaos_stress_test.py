@@ -18,13 +18,14 @@ Simulates:
 """
 import asyncio
 import os
+import io
 import sys
 import time
 import threading
 
-if hasattr(sys.stdout, "reconfigure"):
+if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding="utf-8")
-if hasattr(sys.stderr, "reconfigure"):
+if isinstance(sys.stderr, io.TextIOWrapper):
     sys.stderr.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
@@ -186,7 +187,7 @@ def test_chaos_deadlock_cycle() -> bool:
     graph.add_node(GraphNode(task_id="A", name="Node A", objective="A", dependencies=["B"]))
     graph.add_node(GraphNode(task_id="B", name="Node B", objective="B", dependencies=["A"]))
     cycles = graph.detect_cycles()
-    ok = len(cycles) > 0
+    ok = bool(cycles)
     return log_chaos(10, "Chaos: Deadlock / Cycle Detection", ok, f"Cycle detected: {cycles}")
 
 # 11. Background Service Failure Detection

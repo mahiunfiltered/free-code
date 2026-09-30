@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Optimization handlers for fast-path API responses.
 
 Each handler returns a MessagesResponse if the request matches and the

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Model-list response construction for FCC clients."""
 
 import math

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """CLI event handling for a single queued node (transcript + session + errors)."""
 
 from collections.abc import Awaitable, Callable

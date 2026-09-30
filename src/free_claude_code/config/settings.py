@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Pure, validated application settings schema."""
 
 from typing import Annotated
@@ -15,7 +13,11 @@ from pydantic import (
     model_validator,
 )
 
-from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from .constants import (
+    HTTP_CONNECT_TIMEOUT_DEFAULT,
+    HTTP_FIRST_BYTE_TIMEOUT_DEFAULT,
+    HTTP_STREAM_IDLE_TIMEOUT_DEFAULT,
+)
 from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
@@ -396,6 +398,11 @@ class Settings(BaseModel):
         default=None,
         validation_alias="CHAT_MODELS",
     )
+    # Ultra mode's lead-agent analysis/planning call (always sent reasoning-off);
+    # unset: MODEL.
+    ultra_analysis_model: OptionalNonEmptyString = Field(
+        default=None, validation_alias="ULTRA_ANALYSIS_MODEL"
+    )
 
     # ==================== Per-Provider Proxy ====================
     openai_proxy: OptionalNonEmptyString = Field(
@@ -593,6 +600,18 @@ class Settings(BaseModel):
     http_connect_timeout: float = Field(
         default=HTTP_CONNECT_TIMEOUT_DEFAULT,
         validation_alias="HTTP_CONNECT_TIMEOUT",
+    )
+    http_first_byte_timeout: float = Field(
+        default=HTTP_FIRST_BYTE_TIMEOUT_DEFAULT,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="HTTP_FIRST_BYTE_TIMEOUT",
+    )
+    http_stream_idle_timeout: float = Field(
+        default=HTTP_STREAM_IDLE_TIMEOUT_DEFAULT,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="HTTP_STREAM_IDLE_TIMEOUT",
     )
 
     # ==================== Fast Prefix Detection ====================
@@ -931,7 +950,12 @@ class Settings(BaseModel):
         return ",".join(schemes)
 
     @field_validator(
-        "model", "model_fable", "model_opus", "model_sonnet", "model_haiku"
+        "model",
+        "model_fable",
+        "model_opus",
+        "model_sonnet",
+        "model_haiku",
+        "ultra_analysis_model",
     )
     @classmethod
     def validate_model_format(cls, v: str | None) -> str | None:

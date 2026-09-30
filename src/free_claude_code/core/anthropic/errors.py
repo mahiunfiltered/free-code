@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Anthropic error types and envelopes."""
 
 from typing import Any

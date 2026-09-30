@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """OpenAI Responses API product flow for Codex clients."""
 
 from fastapi.responses import JSONResponse

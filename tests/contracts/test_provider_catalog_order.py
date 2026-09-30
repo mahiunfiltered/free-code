@@ -10,6 +10,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "open_router",
     "groq",
     "cline_pass",
+    "openai_api",
     "openai",
     "xai",
     "qwencloud",

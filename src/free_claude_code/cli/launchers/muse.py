@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Installed `fcc-muse` launcher for attached Muse Code sessions."""
 
 import os

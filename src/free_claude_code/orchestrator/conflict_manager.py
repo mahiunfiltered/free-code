@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """File conflict protection and path scope locking for parallel agents."""
 
 import os
@@ -23,7 +21,11 @@ class ConflictManager:
             for locked_p, owner_id in self._locked_paths.items():
                 if owner_id == task_id:
                     continue
-                if norm == locked_p or norm.startswith(locked_p + os.sep) or locked_p.startswith(norm + os.sep):
+                if (
+                    norm == locked_p
+                    or norm.startswith(locked_p + os.sep)
+                    or locked_p.startswith(norm + os.sep)
+                ):
                     return False
         return True
 
@@ -45,7 +47,9 @@ class ConflictManager:
     def release_scope(self, task_id: str) -> None:
         """Releases all locks held by a task."""
         with self._lock:
-            to_remove = [p for p, owner in self._locked_paths.items() if owner == task_id]
+            to_remove = [
+                p for p, owner in self._locked_paths.items() if owner == task_id
+            ]
             for p in to_remove:
                 self._locked_paths.pop(p, None)
 
@@ -54,6 +58,10 @@ class ConflictManager:
         with self._lock:
             norm = self._normalize_path(path)
             for locked_p, owner_id in self._locked_paths.items():
-                if norm == locked_p or norm.startswith(locked_p + os.sep) or locked_p.startswith(norm + os.sep):
+                if (
+                    norm == locked_p
+                    or norm.startswith(locked_p + os.sep)
+                    or locked_p.startswith(norm + os.sep)
+                ):
                     return owner_id
             return None

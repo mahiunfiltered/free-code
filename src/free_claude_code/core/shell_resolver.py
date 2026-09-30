@@ -10,18 +10,16 @@ Detects and resolves available shells on Windows and Unix systems:
 Guarantees that no subsystem blindly invokes '/bin/bash' on Windows.
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Mapping, Sequence
+from enum import StrEnum
 
 
-class ShellType(str, Enum):
+class ShellType(StrEnum):
     PWSH = "pwsh"
     POWERSHELL = "powershell"
     CMD = "cmd"
@@ -40,13 +38,13 @@ class ResolvedShell:
 
     def build_command_args(self, command: str) -> list[str]:
         """Builds the full argument list to execute a command string."""
-        if self.shell_type in (ShellType.PWSH, ShellType.POWERSHELL):
-            return [self.executable, *self.base_args, command]
-        elif self.shell_type == ShellType.CMD:
-            return [self.executable, *self.base_args, command]
-        elif self.shell_type in (ShellType.GIT_BASH, ShellType.POSIX_BASH, ShellType.POSIX_SH):
-            return [self.executable, *self.base_args, command]
-        elif self.shell_type == ShellType.WSL:
+        if (
+            self.shell_type in (ShellType.PWSH, ShellType.POWERSHELL)
+            or self.shell_type == ShellType.CMD
+            or self.shell_type
+            in (ShellType.GIT_BASH, ShellType.POSIX_BASH, ShellType.POSIX_SH)
+            or self.shell_type == ShellType.WSL
+        ):
             return [self.executable, *self.base_args, command]
         return [self.executable, command]
 
@@ -59,7 +57,9 @@ class ShellResolver:
         self._cache: dict[str, str | None] = {}
         self._discover_all()
 
-    def _find_executable(self, name: str, fallback_paths: Sequence[str] = ()) -> str | None:
+    def _find_executable(
+        self, name: str, fallback_paths: Sequence[str] = ()
+    ) -> str | None:
         if name in self._cache:
             return self._cache[name]
 
@@ -175,7 +175,13 @@ class ShellResolver:
                 return ResolvedShell(
                     shell_type=ShellType.PWSH,
                     executable=pwsh,
-                    base_args=["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"],
+                    base_args=[
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                    ],
                     is_windows=True,
                 )
 
@@ -185,7 +191,13 @@ class ShellResolver:
                 return ResolvedShell(
                     shell_type=ShellType.POWERSHELL,
                     executable=ps,
-                    base_args=["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"],
+                    base_args=[
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                    ],
                     is_windows=True,
                 )
 
@@ -245,7 +257,13 @@ class ShellResolver:
             return ResolvedShell(
                 shell_type=ShellType.PWSH,
                 executable=pwsh,
-                base_args=["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"],
+                base_args=[
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                ],
                 is_windows=True,
             )
 
@@ -254,7 +272,13 @@ class ShellResolver:
             return ResolvedShell(
                 shell_type=ShellType.POWERSHELL,
                 executable=ps,
-                base_args=["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"],
+                base_args=[
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                ],
                 is_windows=True,
             )
 

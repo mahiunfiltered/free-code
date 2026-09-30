@@ -1,13 +1,14 @@
 import asyncio
 import json
 import os
+import io
 import sys
 import time
 
 # Ensure UTF-8 output encoding for Windows consoles
-if hasattr(sys.stdout, "reconfigure"):
+if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding="utf-8")
-if hasattr(sys.stderr, "reconfigure"):
+if isinstance(sys.stderr, io.TextIOWrapper):
     sys.stderr.reconfigure(encoding="utf-8")
 
 from free_claude_code.core.context_optimizer import get_context_optimizer

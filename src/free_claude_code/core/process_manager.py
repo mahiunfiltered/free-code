@@ -1,15 +1,15 @@
-from __future__ import annotations
-
 """Centralized Windows-native subprocess manager with bounded timeouts and tree termination."""
 
+import contextlib
 import os
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Mapping
+from typing import IO
 
 
 class ProcessKind(StrEnum):
@@ -92,33 +92,33 @@ class SubprocessManager:
             self._processes[proc.pid] = managed
 
         # Start output reading threads to prevent pipe deadlocks
-        def _read_stdout():
-            try:
-                for line in proc.stdout:
-                    managed.stdout_buffer.append(line)
-            except Exception:
-                pass
+        def _drain(stream: IO[str] | None, buffer: list[str]) -> None:
+            if stream is None:
+                return
+            with contextlib.suppress(Exception):
+                buffer.extend(stream)
 
-        def _read_stderr():
-            try:
-                for line in proc.stderr:
-                    managed.stderr_buffer.append(line)
-            except Exception:
-                pass
-
-        threading.Thread(target=_read_stdout, daemon=True).start()
-        threading.Thread(target=_read_stderr, daemon=True).start()
+        threading.Thread(
+            target=_drain, args=(proc.stdout, managed.stdout_buffer), daemon=True
+        ).start()
+        threading.Thread(
+            target=_drain, args=(proc.stderr, managed.stderr_buffer), daemon=True
+        ).start()
 
         return managed
 
-    def wait_with_timeout(self, managed: ManagedProcess, timeout: float | None = None) -> int:
+    def wait_with_timeout(
+        self, managed: ManagedProcess, timeout: float | None = None
+    ) -> int:
         """Waits for a finite process to exit within the timeout period."""
         eff_timeout = timeout if timeout is not None else managed.timeout_seconds
         try:
             return managed.process.wait(timeout=eff_timeout)
         except subprocess.TimeoutExpired:
             self.terminate_tree(managed.pid)
-            raise TimeoutError(f"Process '{managed.name}' (PID {managed.pid}) exceeded timeout of {eff_timeout}s")
+            raise TimeoutError(
+                f"Process '{managed.name}' (PID {managed.pid}) exceeded timeout of {eff_timeout}s"
+            ) from None
         finally:
             with self._lock:
                 self._processes.pop(managed.pid, None)
@@ -126,24 +126,21 @@ class SubprocessManager:
     def terminate_tree(self, pid: int) -> None:
         """Terminates a process and all its child subprocesses cleanly on Windows or Unix."""
         if sys.platform == "win32":
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(pid)],
                     capture_output=True,
                     timeout=5,
                     check=False,
                 )
-            except Exception:
-                pass
         else:
             try:
                 import signal
+
                 os.killpg(os.getpgid(pid), signal.SIGKILL)
             except Exception:
-                try:
+                with contextlib.suppress(Exception):
                     os.kill(pid, 9)
-                except Exception:
-                    pass
 
         with self._lock:
             self._processes.pop(pid, None)

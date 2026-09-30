@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Provider-owned stream holdback and recovery decisions."""
 
 import time
@@ -35,8 +33,18 @@ class RecoveryDecision:
     has_buffered: bool
 
 
+def _is_output_delta(event: str) -> bool:
+    """Whether an SSE event carries visible output (Anthropic or Responses delta)."""
+    return event.partition("\n")[0].endswith("delta")
+
+
 class RecoveryHoldbackBuffer:
-    """Briefly retain SSE so early cutoffs can be retried invisibly."""
+    """Retain SSE until the first output delta so pre-output cutoffs retry invisibly.
+
+    Holding framing events (``message_start``, block starts) is free; holding a
+    delta would add the holdback to time-to-first-token, so the first delta
+    commits the stream and later failures use midstream recovery instead.
+    """
 
     def __init__(
         self,
@@ -61,7 +69,8 @@ class RecoveryHoldbackBuffer:
         self._events.append(event)
         self._bytes += len(event.encode("utf-8", errors="replace"))
         if (
-            self._bytes >= self._max_bytes
+            _is_output_delta(event)
+            or self._bytes >= self._max_bytes
             or self._now() - self._started_at >= self._holdback_seconds
         ):
             return self.flush()

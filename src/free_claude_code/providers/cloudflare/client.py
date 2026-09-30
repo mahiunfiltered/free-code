@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Cloudflare Workers AI provider using OpenAI-compatible chat completions."""
 
 from collections.abc import Iterator, Mapping

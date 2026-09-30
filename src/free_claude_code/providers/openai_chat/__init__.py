@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """OpenAI-compatible provider family."""
 
 from free_claude_code.providers.admission import ProviderAdmissionController

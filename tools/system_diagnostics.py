@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 """Complete system environment diagnostics tool for Free Claude Code on Windows.
 

@@ -20,6 +20,7 @@ from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.core.request_context import bind_claude_session_id
 from free_claude_code.core.storage import Store
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.endpoint_health import CircuitState, HealthSignal
@@ -424,7 +425,7 @@ async def test_tokens_and_session_are_recorded(pool):
     delta = 'event: message_delta\ndata: {"usage": {"output_tokens": 7}}\n\n'
     provider = pooled(pool, ("a", ScriptedProvider(ok(start, delta))))
 
-    with logger.contextualize(claude_session_id="sess-123"):
+    with bind_claude_session_id("sess-123"):
         await collect(provider.stream_messages(request()))
 
     row = rows(pool)[0]

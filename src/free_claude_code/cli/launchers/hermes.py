@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Installed `fcc-hermes` launcher for attached Hermes Agent sessions."""
 
 import json

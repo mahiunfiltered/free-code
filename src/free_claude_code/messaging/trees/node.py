@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Message tree node model."""
 
 from dataclasses import dataclass, field

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Egress policy for user-controlled web_fetch URLs (SSRF guard)."""
 
 import ipaddress

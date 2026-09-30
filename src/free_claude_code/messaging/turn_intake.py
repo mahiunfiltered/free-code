@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Inbound messaging turn intake and queue admission."""
 
 from collections.abc import Awaitable, Callable

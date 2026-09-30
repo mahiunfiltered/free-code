@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Installed `fcc-codex` launcher."""
 
 import json

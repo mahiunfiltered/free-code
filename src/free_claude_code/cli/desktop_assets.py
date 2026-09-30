@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Packaged visual assets owned by the FCC desktop shell."""
 
 from importlib.resources import files

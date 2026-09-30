@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Reversible tool names for OpenAI-compatible protocol boundaries."""
 
 import hashlib

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Heuristic parser for text-emitted tool calls."""
 
 import json

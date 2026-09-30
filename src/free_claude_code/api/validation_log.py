@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Safe metadata summaries for HTTP 422 validation logging (no raw text content)."""
 
 from free_claude_code.core.json_types import JsonObject

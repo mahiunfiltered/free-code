@@ -26,7 +26,11 @@ from free_claude_code.cli.process_registry import (
     register_pid,
     unregister_pid,
 )
-from free_claude_code.core.claude_permission_modes import PERMISSION_MODES
+from free_claude_code.core.claude_permission_modes import (
+    PERMISSION_MODES,
+    effective_permission_mode,
+    strictness,
+)
 from free_claude_code.core.json_types import JsonObject, JsonValue
 
 from . import project_files, transcripts
@@ -172,13 +176,19 @@ class InteractiveClaudeSession:
         on_release: Callable[[], None] | None = None,
         on_conversation: Callable[[str], None] | None = None,
         policy_preset: str | None = None,
+        preset_permission_mode: str | None = None,
         budget: ChatBudget | None = None,
         observer: SessionObserver | None = None,
     ) -> None:
-        """``on_conversation`` fires with the session id once a prompt was sent."""
+        """``on_conversation`` fires with the session id once a prompt was sent.
+
+        ``preset_permission_mode`` is the policy preset's mode: the loosest mode
+        ``set_permission_mode`` may switch this session to.
+        """
 
         self.live_id = live_id
         self.policy_preset = policy_preset
+        self.preset_permission_mode = preset_permission_mode
         self.budget = budget
         self._observer = observer
         self._input_tokens = 0
@@ -282,6 +292,8 @@ class InteractiveClaudeSession:
         """Send a control request (interrupt, set_model, ...) and await its reply."""
 
         subtype = request.get("subtype")
+        if subtype == "set_permission_mode":
+            self._check_mode_allowed(request.get("mode"))
         request_id = f"fcc_{next(self._request_ids)}"
         future: asyncio.Future[JsonObject] = asyncio.get_running_loop().create_future()
         self._pending_controls[request_id] = future
@@ -309,12 +321,44 @@ class InteractiveClaudeSession:
             self._publish(self._state_event())
         return response
 
+    def _check_mode_allowed(self, mode: JsonValue) -> None:
+        if not isinstance(mode, str) or mode not in PERMISSION_MODES:
+            raise ChatSessionError(f"Unknown permission mode '{mode}'.")
+        preset_mode = self.preset_permission_mode
+        if preset_mode is not None and strictness(mode) < strictness(preset_mode):
+            raise ChatSessionError(
+                f"The '{self.policy_preset}' policy allows '{preset_mode}' or a "
+                f"stricter mode, not '{mode}'."
+            )
+
+    def _clamp_mode_updates(self, decision: JsonObject) -> JsonObject:
+        """Keep ``setMode`` permission updates (plan approval) within the preset's mode."""
+
+        updates = decision.get("updatedPermissions")
+        preset_mode = self.preset_permission_mode
+        if preset_mode is None or not isinstance(updates, list):
+            return decision
+        clamped: list[JsonValue] = []
+        for update in updates:
+            mode = update.get("mode") if isinstance(update, dict) else None
+            if isinstance(update, dict) and update.get("type") == "setMode":
+                requested = (
+                    mode if isinstance(mode, str) and mode in PERMISSION_MODES else None
+                )
+                update = {
+                    **update,
+                    "mode": effective_permission_mode(requested, preset_mode),
+                }
+            clamped.append(update)
+        return {**decision, "updatedPermissions": clamped}
+
     async def respond_permission(self, request_id: str, decision: JsonObject) -> None:
         """Answer a ``can_use_tool`` request with an allow/deny PermissionResult."""
 
         if request_id not in self._open_permission_ids:
             raise ChatSessionError("That permission request is no longer pending.")
         tool_name = self._open_permission_ids.pop(request_id)
+        decision = self._clamp_mode_updates(decision)
         await self._write(
             {
                 "type": "control_response",
@@ -377,6 +421,7 @@ class InteractiveClaudeSession:
             "exited": self.exited,
             "has_messages": self.has_messages,
             "policy_preset": self.policy_preset,
+            "preset_permission_mode": self.preset_permission_mode,
             "budget": None if self.budget is None else self.budget.to_json(),
             "usage": self.usage(),
         }
@@ -742,8 +787,9 @@ class InteractiveClaudeSessions:
     ) -> InteractiveClaudeSession:
         """Start one chat process.
 
-        ``policy_preset`` adds FCC permission rules via ``--settings``; an explicit
-        ``permission_mode`` wins over the preset's mode.
+        ``policy_preset`` adds FCC permission rules via ``--settings`` and runs in the
+        preset's permission mode; ``permission_mode`` (None = no preference) applies
+        only when it is stricter (``effective_permission_mode``).
         """
 
         if permission_mode is not None and permission_mode not in PERMISSION_MODES:
@@ -753,6 +799,7 @@ class InteractiveClaudeSessions:
         if not os.path.isdir(workspace):
             raise ChatSessionError(f"Folder does not exist: {workspace}")
         settings_json: str | None = None
+        preset_mode: str | None = None
         if policy_preset:
             if self._policy_compiler is None:
                 raise ChatSessionError("Policy presets are not available.")
@@ -762,8 +809,7 @@ class InteractiveClaudeSessions:
                 )
             except ValueError as exc:
                 raise ChatSessionError(str(exc)) from exc
-            permission_mode = permission_mode or preset_mode
-        permission_mode = permission_mode or "default"
+        permission_mode = effective_permission_mode(permission_mode, preset_mode)
         claude_bin = shutil.which(self._claude_bin)
         if claude_bin is None:
             raise ChatSessionError(
@@ -780,6 +826,7 @@ class InteractiveClaudeSessions:
             on_release=lambda: self._close_soon(live_id),
             on_conversation=self._remember_app_session,
             policy_preset=policy_preset or None,
+            preset_permission_mode=preset_mode,
             budget=chat_budget,
             observer=self._observer,
         )

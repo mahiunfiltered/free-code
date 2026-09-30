@@ -563,3 +563,17 @@ def test_settings_defaults_do_not_contain_empty_enum_strings() -> None:
     for _name, value in Settings():
         if isinstance(value, Enum):
             assert value.value
+
+
+def test_ultra_analysis_model_is_an_optional_admin_model_ref() -> None:
+    assert Settings.model_validate({}).ultra_analysis_model is None
+    settings = Settings.model_validate({"ULTRA_ANALYSIS_MODEL": "nvidia_nim/a/b"})
+    assert settings.ultra_analysis_model == "nvidia_nim/a/b"
+    with pytest.raises(ValidationError, match="provider_type/model"):
+        Settings.model_validate({"ULTRA_ANALYSIS_MODEL": "no-provider"})
+    field = next(f for f in FIELDS if f.key == "ULTRA_ANALYSIS_MODEL")
+    assert (field.section_id, field.field_type, field.settings_attr) == (
+        "models",
+        "optional_model",
+        "ultra_analysis_model",
+    )

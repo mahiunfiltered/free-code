@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Typed capabilities consumed by application use cases."""
 
 from collections.abc import AsyncIterator, Callable

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Pydantic models for OpenAI Responses-compatible ingress."""
 
 from pydantic import BaseModel, ConfigDict

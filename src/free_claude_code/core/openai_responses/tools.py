@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Tool conversion helpers for the OpenAI Responses adapter."""
 
 import hashlib

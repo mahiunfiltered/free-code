@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Lightweight entrypoint for the optional FCC desktop shell."""
 
 import sys

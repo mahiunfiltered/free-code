@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Managed Claude Code session pool for messaging."""
 
 import asyncio

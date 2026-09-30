@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Render and truncate ordered transcript segments."""
 
 from collections import deque

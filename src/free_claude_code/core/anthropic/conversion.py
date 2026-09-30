@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Message and tool format converters."""
 
 import json

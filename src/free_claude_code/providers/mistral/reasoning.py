@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Mistral La Plateforme reasoning compatibility helpers."""
 
 import json

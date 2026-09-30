@@ -6,11 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from free_claude_code.workbench.checkpoints import create_checkpoint, git
+from free_claude_code.workbench.checkpoints import (
+    ChangedFile,
+    TreeDiff,
+    create_checkpoint,
+    git,
+)
+from free_claude_code.workbench.ignore import (
+    DEFAULT_DIFF_IGNORE,
+    diff_ignore_patterns,
+    split_ignored,
+)
 from free_claude_code.workbench.intent import IntentContract, Scope
 from free_claude_code.workbench.verification.checks import CheckResult, GapRow
 from free_claude_code.workbench.verification.gate import (
     compute_disposition,
+    drop_ignored,
     render_markdown,
     run_gate,
 )
@@ -261,3 +272,96 @@ def test_compute_disposition_rules():
         == "FAILED_VERIFICATION"
     )
     assert compute_disposition([], [])[0] == "NEEDS_REVIEW"
+
+
+@pytest.mark.asyncio
+async def test_tool_state_files_are_ignored_and_reported(tmp_path: Path):
+    root = project(tmp_path)
+    cp = create_checkpoint(root)
+    add_subtract(root)
+    for name in (
+        ".claude-flow/policy/state.json",
+        "src/__pycache__/calc.cpython-314.pyc",
+        ".pytest_cache/v/cache/nodeids",
+        ".fcc-bench/run/report.json",
+    ):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(
+            '{"token": "not-a-real-secret-value"}\n', encoding="utf-8"
+        )
+    pkg = await run_gate(CONTRACT, str(root), cp, profile=profile(root))
+    assert pkg.disposition == "VERIFIED", pkg.blocking_reasons
+    assert pkg.changed_files == ["src/calc.py"]
+    [warning] = [w for w in pkg.warnings if w.startswith("ignored ")]
+    assert (
+        ".claude-flow/policy/state.json" in warning and "3 tool/agent" in warning
+    )  # __pycache__ is gitignored
+
+
+@pytest.mark.asyncio
+async def test_claude_settings_are_not_ignored(tmp_path: Path):
+    root = project(tmp_path)
+    cp = create_checkpoint(root)
+    add_subtract(root)
+    (root / ".claude").mkdir()
+    (root / ".claude/settings.json").write_text("{}\n", encoding="utf-8")
+    pkg = await run_gate(CONTRACT, str(root), cp, profile=profile(root))
+    assert pkg.disposition == "FAILED_VERIFICATION"
+    assert ".claude/settings.json" in pkg.changed_files
+
+
+@pytest.mark.asyncio
+async def test_project_verify_json_adds_ignore_globs(tmp_path: Path):
+    root = project(tmp_path)
+    (root / ".fcc").mkdir()
+    (root / ".fcc/verify.json").write_text('{"ignore": ["build/**"]}', encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "verify config")
+    cp = create_checkpoint(root)
+    add_subtract(root)
+    (root / "build").mkdir()
+    (root / "build/out.txt").write_text("x\n", encoding="utf-8")
+    pkg = await run_gate(CONTRACT, str(root), cp, profile=profile(root))
+    assert pkg.disposition == "VERIFIED", pkg.blocking_reasons
+    assert "build/out.txt" not in pkg.changed_files
+    assert any("build/out.txt" in w for w in pkg.warnings)
+
+
+def test_invalid_verify_json_warns_and_keeps_defaults(tmp_path: Path):
+    (tmp_path / ".fcc").mkdir()
+    (tmp_path / ".fcc/verify.json").write_text('{"ignore": "build"}', encoding="utf-8")
+    patterns, warnings = diff_ignore_patterns(str(tmp_path))
+    assert patterns == list(DEFAULT_DIFF_IGNORE)
+    assert warnings and "list of globs" in warnings[0]
+    (tmp_path / ".fcc/verify.json").write_text("{nope", encoding="utf-8")
+    assert diff_ignore_patterns(str(tmp_path))[1]
+
+
+def test_drop_ignored_removes_file_chunks_from_diff_text():
+    text = (
+        "diff --git a/src/a.py b/src/a.py\n+x = 1\n"
+        "diff --git a/.claude-flow/s.json b/.claude-flow/s.json\n+{}\n"
+        "diff --git a/b.py b/b.py\n+y = 2\n"
+    )
+    diff = TreeDiff(
+        [ChangedFile("src/a.py", "M"), ChangedFile(".claude-flow/s.json", "A"),
+         ChangedFile("b.py", "M")],
+        text, "", "tree",
+    )  # fmt: skip
+    kept, ignored = drop_ignored(diff, list(DEFAULT_DIFF_IGNORE))
+    assert ignored == [".claude-flow/s.json"]
+    assert [f.path for f in kept.files] == ["src/a.py", "b.py"]
+    assert ".claude-flow" not in kept.text and "+y = 2" in kept.text
+
+
+def test_default_ignore_covers_plugin_state_folders():
+    paths = [
+        ".impeccable/state.json",
+        "web/.impeccable/cache/x",
+        ".claude-flow/policy/state.json",
+        "src/app.py",
+        ".claude/settings.json",  # tasks may edit settings: never ignored
+    ]
+    kept, ignored = split_ignored(paths, list(DEFAULT_DIFF_IGNORE))
+    assert kept == ["src/app.py", ".claude/settings.json"]
+    assert ignored == paths[:3]

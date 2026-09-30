@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Google thought-signature replay for OpenAI-compatible tool calls."""
 
 from copy import deepcopy

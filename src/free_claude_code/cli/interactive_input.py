@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Windows console mode hardening, Win32 clipboard integration, and interactive multiline prompt engine."""
 
 import ctypes
@@ -8,6 +6,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import TextIO
@@ -58,10 +57,10 @@ if sys.platform == "win32":
     import ctypes.wintypes
 
     class CHAR_UNION(ctypes.Union):
-        _fields_ = [
+        _fields_ = (
             ("UnicodeChar", ctypes.wintypes.WCHAR),
             ("AsciiChar", ctypes.c_char),
-        ]
+        )
 
     class KEY_EVENT_RECORD(ctypes.Structure):
         _fields_ = [
@@ -74,7 +73,7 @@ if sys.platform == "win32":
         ]
 
     class EVENT_UNION(ctypes.Union):
-        _fields_ = [("KeyEvent", KEY_EVENT_RECORD)]
+        _fields_ = (("KeyEvent", KEY_EVENT_RECORD),)
 
     class INPUT_RECORD(ctypes.Structure):
         _fields_ = [
@@ -97,8 +96,6 @@ if sys.platform == "win32":
         ctypes.wintypes.WPARAM,
         ctypes.POINTER(KBDLLHOOKSTRUCT),
     )
-else:
-    HOOKPROC = object  # type: ignore
 
 
 def _setup_win32_signatures(user32: ctypes.WinDLL, kernel32: ctypes.WinDLL) -> None:
@@ -221,13 +218,13 @@ def get_windows_clipboard_text(
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         _setup_win32_signatures(user32, kernel32)
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         return None
 
     import random
 
     opened = False
-    for attempt in range(max_retries):
+    for _attempt in range(max_retries):
         if user32.OpenClipboard(None):
             opened = True
             break
@@ -270,13 +267,13 @@ def set_windows_clipboard_text(
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         _setup_win32_signatures(user32, kernel32)
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         return False
 
     import random
 
     opened = False
-    for attempt in range(max_retries):
+    for _attempt in range(max_retries):
         if user32.OpenClipboard(None):
             opened = True
             break
@@ -303,9 +300,7 @@ def set_windows_clipboard_text(
         finally:
             kernel32.GlobalUnlock(h_mem)
 
-        if not user32.SetClipboardData(CF_UNICODETEXT, h_mem):
-            return False
-        return True
+        return bool(user32.SetClipboardData(CF_UNICODETEXT, h_mem))
     finally:
         user32.CloseClipboard()
 
@@ -472,13 +467,13 @@ class MultilineBuffer:
         middle_lines = insert_lines[1:-1]
         last_line = insert_lines[-1] + suffix
 
-        new_lines = (
-            self.lines[: self.cursor_row]
-            + [first_line]
-            + middle_lines
-            + [last_line]
-            + self.lines[self.cursor_row + 1 :]
-        )
+        new_lines = [
+            *self.lines[: self.cursor_row],
+            first_line,
+            *middle_lines,
+            last_line,
+            *self.lines[self.cursor_row + 1 :],
+        ]
         self.lines = new_lines
         self.cursor_row = self.cursor_row + len(insert_lines) - 1
         self.cursor_col = len(insert_lines[-1])
@@ -653,7 +648,7 @@ class InteractivePromptReader:
         self._render()
 
         while True:
-            ch = msvcrt.get_wch()
+            ch = msvcrt.getwch()
 
             if ch == "\x16":
                 clip = get_clipboard_text()
@@ -663,7 +658,7 @@ class InteractivePromptReader:
                 continue
 
             if ch in ("\x00", "\xe0"):
-                code = msvcrt.get_wch()
+                code = msvcrt.getwch()
                 if code == "H":
                     self.buffer.move_cursor_up()
                 elif code == "P":
@@ -771,9 +766,9 @@ class InteractivePromptReader:
             if ch >= " ":
                 burst = [ch]
                 while msvcrt.kbhit():
-                    next_ch = msvcrt.get_wch()
+                    next_ch = msvcrt.getwch()
                     if next_ch in ("\x00", "\xe0"):
-                        msvcrt.get_wch()
+                        msvcrt.getwch()
                         continue
                     if next_ch in ("\r", "\n"):
                         burst.append("\n")
@@ -785,7 +780,7 @@ class InteractivePromptReader:
     def _read_posix_fallback(self) -> str | None:
         try:
             return input(self.prompt_prefix)
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             return None
 
 
@@ -816,11 +811,11 @@ def diagnose_terminal_input() -> dict[str, object]:
         "environment": {
             "TERM": os.environ.get("TERM"),
             "WT_SESSION": os.environ.get("WT_SESSION") is not None,
-            "ConEmuPID": os.environ.get("ConEmuPID"),
+            "ConEmuPID": os.environ.get("CONEMUPID"),
             "PYTHONUTF8": os.environ.get("PYTHONUTF8"),
             "PYTHONIOENCODING": os.environ.get("PYTHONIOENCODING"),
             "SHELL": os.environ.get("SHELL"),
-            "ComSpec": os.environ.get("ComSpec"),
+            "ComSpec": os.environ.get("COMSPEC"),
         },
     }
 
@@ -854,9 +849,7 @@ def diagnose_terminal_input() -> dict[str, object]:
     return results
 
 
-def print_diagnostics(
-    diag: dict[str, object], file: TextIO | None = None
-) -> None:
+def print_diagnostics(diag: dict[str, object], file: TextIO | None = None) -> None:
     """Print human-readable diagnostic report to output stream."""
     out = file or sys.stdout
     print("=" * 64, file=out)
@@ -971,8 +964,6 @@ def inject_text_into_console(text: str, h_stdin: object = None) -> int:
 
     array_type = INPUT_RECORD * len(records)
     record_array = array_type(*records)
-    import ctypes.wintypes
-
     written = ctypes.wintypes.DWORD()
     ok = kernel32.WriteConsoleInputW(
         h_stdin,
@@ -995,8 +986,6 @@ class WindowsConsolePasteBridge:
     """
 
     def __init__(self) -> None:
-        import threading
-
         self._thread: threading.Thread | None = None
         self._thread_id: int = 0
         self._hook_handle: int | None = None
@@ -1013,8 +1002,6 @@ class WindowsConsolePasteBridge:
             return False
         if self._running:
             return True
-
-        import threading
 
         self._running = True
         started_event = threading.Event()
@@ -1044,7 +1031,7 @@ class WindowsConsolePasteBridge:
         self._thread = None
         self._thread_id = 0
 
-    def _run_bridge(self, started_event: object) -> None:
+    def _run_bridge(self, started_event: threading.Event) -> None:
         import ctypes.wintypes
 
         try:
@@ -1057,7 +1044,7 @@ class WindowsConsolePasteBridge:
             h_stdin = kernel32.GetStdHandle(STD_INPUT_HANDLE)
 
             def _hook_callback(
-                nCode: int, wParam: int, lParam: ctypes.POINTER(KBDLLHOOKSTRUCT)
+                nCode: int, wParam: int, lParam: ctypes._Pointer[KBDLLHOOKSTRUCT]
             ) -> int:
                 if nCode >= 0 and wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
                     try:
@@ -1065,10 +1052,10 @@ class WindowsConsolePasteBridge:
                         if h_console == 0 or h_fg == h_console:
                             vk = lParam.contents.vkCode
                             ctrl_down = bool(
-                                (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
+                                user32.GetAsyncKeyState(VK_CONTROL) & 0x8000
                             )
                             shift_down = bool(
-                                (user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
+                                user32.GetAsyncKeyState(VK_SHIFT) & 0x8000
                             )
                             if (vk == VK_V and ctrl_down) or (
                                 vk == VK_INSERT and shift_down
@@ -1090,28 +1077,30 @@ class WindowsConsolePasteBridge:
                 0,
             )
 
-            if hasattr(started_event, "set"):
-                started_event.set()
+            started_event.set()
 
             # Windows message pump
             msg = ctypes.wintypes.MSG()
             while self._running:
                 try:
                     mode = ctypes.c_uint32()
-                    if kernel32.GetConsoleMode(h_stdin, ctypes.byref(mode)):
-                        if not (mode.value & ENABLE_QUICK_EDIT_MODE):
-                            kernel32.SetConsoleMode(
-                                h_stdin,
-                                mode.value
-                                | ENABLE_QUICK_EDIT_MODE
-                                | ENABLE_EXTENDED_FLAGS,
-                            )
+                    if kernel32.GetConsoleMode(h_stdin, ctypes.byref(mode)) and not (
+                        mode.value & ENABLE_QUICK_EDIT_MODE
+                    ):
+                        kernel32.SetConsoleMode(
+                            h_stdin,
+                            mode.value | ENABLE_QUICK_EDIT_MODE | ENABLE_EXTENDED_FLAGS,
+                        )
                 except Exception:
                     pass
 
                 user32.MsgWaitForMultipleObjects(0, None, False, 100, 0x04FF)
                 while user32.PeekMessageW(
-                    ctypes.byref(msg), None, 0, 0, 1  # PM_REMOVE
+                    ctypes.byref(msg),
+                    None,
+                    0,
+                    0,
+                    1,  # PM_REMOVE
                 ):
                     if msg.message == WM_QUIT:
                         return
@@ -1121,8 +1110,7 @@ class WindowsConsolePasteBridge:
         except Exception:
             pass
         finally:
-            if hasattr(started_event, "set"):
-                started_event.set()
+            started_event.set()
             if self._hook_handle:
                 try:
                     user32 = ctypes.windll.user32
@@ -1130,4 +1118,3 @@ class WindowsConsolePasteBridge:
                 except Exception:
                     pass
                 self._hook_handle = None
-

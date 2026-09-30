@@ -1,6 +1,16 @@
 """Recovery ladder bounds, classification and recovery prompts."""
 
-from free_claude_code.workbench.intent import IntentContract, Scope
+import sys
+from pathlib import Path
+
+import pytest
+
+from free_claude_code.workbench.checkpoints import create_checkpoint, git
+from free_claude_code.workbench.intent import (
+    IntentContract,
+    Scope,
+    extract_deterministic,
+)
 from free_claude_code.workbench.recovery import (
     MAX_PER_FINGERPRINT,
     MAX_TOTAL,
@@ -14,7 +24,12 @@ from free_claude_code.workbench.verification.failures import (
     Failure,
     make_failure,
 )
-from free_claude_code.workbench.verification.gate import Disposition, EvidencePackage
+from free_claude_code.workbench.verification.gate import (
+    Disposition,
+    EvidencePackage,
+    run_gate,
+)
+from free_claude_code.workbench.verification.profile import ProjectProfile
 
 CONTRACT = IntentContract(
     goal="fix add",
@@ -148,3 +163,65 @@ def test_must_row_failed_by_a_test_retries_the_test_failure():
         "intent_conformance", "intent", "must_not_violated", "N1 violated"
     )
     assert decide(package([failure(), must_not]), []).action == "ask_user"
+
+
+@pytest.mark.asyncio
+async def test_failing_test_with_preserve_tests_row_is_retried(tmp_path: Path):
+    """ "Don't modify tests/" yields a PRESERVE row; a failing test must not violate it."""
+
+    root = tmp_path / "repo"
+    files = {
+        ".gitignore": "__pycache__/\n",
+        "pyproject.toml": "[tool.pytest.ini_options]\n",
+        "calc.py": "def add(a, b):\n    return a - b\n",
+        "tests/test_calc.py": (
+            "import sys, pathlib\n"
+            "sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))\n"
+            "from calc import add\n\n"
+            "def test_add():\n    assert add(2, 2) == 4\n"
+        ),
+    }
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    for args in (
+        ("init", "-q"),
+        ("config", "user.email", "t@example.com"),
+        ("config", "user.name", "t"),
+        ("add", "-A"),
+        ("commit", "-q", "-m", "init"),
+    ):
+        git(root, *args)
+    contract = extract_deterministic(
+        "Fix add() in calc.py. Don't modify tests/."
+    ).contract
+    assert contract.preserve  # the rule under test: a PRESERVE row exists
+    checkpoint = create_checkpoint(root)
+    (root / "calc.py").write_text(
+        "def add(a, b):\n    return a * b + 0\n", encoding="utf-8"
+    )  # still wrong for (2, 3) style inputs? no: 2*2 == 4 passes; make it fail:
+    (root / "calc.py").write_text(
+        "def add(a, b):\n    return a * b + 1\n", encoding="utf-8"
+    )
+    profile = ProjectProfile(
+        str(root),
+        "python",
+        {"test": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]},
+    )
+
+    evidence = await run_gate(contract, str(root), checkpoint, profile=profile)
+
+    assert evidence.disposition == "FAILED_VERIFICATION"
+    rows = {r.kind: r for r in evidence.gap_matrix}
+    assert rows["preserve"].status == "missing"
+    assert not any(f.code == "preserve_violated" for f in evidence.failures)
+    decision = decide(evidence, [])
+    assert decision.action == "retry", decision.reason
+    assert decision.reason.startswith("test")
+
+
+def test_real_preserve_violation_still_asks_user():
+    violated = make_failure(
+        "intent_conformance", "intent", "preserve_violated", "P1 changed tests/x.py"
+    )
+    assert decide(package([failure(), violated]), []).action == "ask_user"

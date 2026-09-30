@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Reasoning and thinking conversion helpers for OpenAI Responses."""
 
 from collections.abc import Mapping

@@ -1,13 +1,14 @@
 import os
 import sys
-import pytest
+
 from free_claude_code.core.shell_resolver import (
-    resolve_shell,
-    get_shell_report,
-    run_shell_command,
-    ShellType,
     ResolvedShell,
+    ShellType,
+    get_shell_report,
+    resolve_shell,
+    run_shell_command,
 )
+
 
 def test_shell_discovery_report():
     report = get_shell_report()
@@ -18,6 +19,7 @@ def test_shell_discovery_report():
     assert "git_bash" in report
     assert "wsl" in report
 
+
 def test_default_shell_resolution():
     shell = resolve_shell()
     assert isinstance(shell, ResolvedShell)
@@ -27,11 +29,13 @@ def test_default_shell_resolution():
     else:
         assert shell.shell_type in (ShellType.POSIX_BASH, ShellType.POSIX_SH)
 
+
 def test_powershell_execution():
     if sys.platform == "win32":
         res = run_shell_command("Write-Output 'POWERSHELL_SHELL_TEST_OK'")
         assert res.returncode == 0
         assert "POWERSHELL_SHELL_TEST_OK" in res.stdout
+
 
 def test_cmd_execution():
     if sys.platform == "win32":
@@ -39,9 +43,15 @@ def test_cmd_execution():
         assert res.returncode == 0
         assert "CMD_TEST_OK" in res.stdout
 
+
 def test_bash_routing():
     if sys.platform == "win32":
         shell = resolve_shell(command="/bin/bash -c 'echo test'")
         # Should route to Git Bash or WSL rather than attempting /bin/bash literally
-        assert shell.shell_type in (ShellType.GIT_BASH, ShellType.WSL, ShellType.PWSH, ShellType.POWERSHELL)
+        assert shell.shell_type in (
+            ShellType.GIT_BASH,
+            ShellType.WSL,
+            ShellType.PWSH,
+            ShellType.POWERSHELL,
+        )
         assert not shell.executable.startswith("/bin/bash")

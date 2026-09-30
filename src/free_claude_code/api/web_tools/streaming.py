@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """SSE streaming for local web_search / web_fetch server-tool results."""
 
 import uuid

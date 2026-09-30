@@ -11,8 +11,15 @@ function Stop-Tree([int[]]$ProcessIds) {
     foreach ($id in ($ProcessIds | Sort-Object -Unique)) { taskkill /PID $id /T /F *> $null }
 }
 
-function Stop-PortOwner([string]$Name, [int]$Port) {
+function Stop-PortOwner([string]$Name, [int]$Port, [string]$Expect = "") {
     $ids = @(Get-NetTCPConnection -LocalPort $Port -State Listen | Select-Object -ExpandProperty OwningProcess)
+    if ($Expect) {
+        # Only stop the listener if it is the process Start-All launched (not some other app on that port).
+        $ids = @($ids | Where-Object {
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$_"
+            "$($proc.Name) $($proc.CommandLine)" -like "*$Expect*"
+        })
+    }
     if ($ids.Count) {
         Stop-Tree $ids
         Write-Status $Name "stopped" Green
@@ -42,11 +49,11 @@ if (Test-Path $envFile) {
 Stop-PortOwner "FCC server" $port
 Stop-Tree @(Get-Process -Name "fcc-server", "fcc-desktop" | Select-Object -ExpandProperty Id)
 
-Stop-PortOwner "NVIDIA proxy" 8787
+Stop-PortOwner "NVIDIA proxy" 8787 "proxy.py"
 
 # Ollama: the tray app respawns the server, so stop both.
 Stop-Tree @(Get-Process -Name "ollama app" | Select-Object -ExpandProperty Id)
-Stop-PortOwner "Ollama" 11434
+Stop-PortOwner "Ollama" 11434 "ollama"
 
 Write-Host ""
 Write-Host "  All stopped. Start again with Start-All.bat" -ForegroundColor Gray

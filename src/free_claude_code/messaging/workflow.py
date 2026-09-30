@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Messaging workflow coordinator for Discord and Telegram prompts."""
 
 import asyncio

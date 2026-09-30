@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Windows Execution Authority & Permission Diagnostic Profile.
 
 Provides the runtime with full legitimate execution capabilities on Windows:
@@ -15,8 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from free_claude_code.core.shell_resolver import get_shell_report, resolve_shell
 
@@ -95,7 +92,9 @@ class WindowsAuthorityManager:
 
         elevation_hint = ""
         if not is_admin:
-            elevation_hint = "Run powershell as Administrator: Start-Process powershell -Verb RunAs"
+            elevation_hint = (
+                "Run powershell as Administrator: Start-Process powershell -Verb RunAs"
+            )
 
         return WindowsAuthorityProfile(
             user=user,
@@ -114,11 +113,15 @@ class WindowsAuthorityManager:
             elevation_hint=elevation_hint,
         )
 
-    def print_authority_banner(self, profile: WindowsAuthorityProfile | None = None) -> None:
+    def print_authority_banner(
+        self, profile: WindowsAuthorityProfile | None = None
+    ) -> None:
         """Prints the Windows Authority diagnostic banner."""
         prof = profile or self.inspect_authority()
         admin_str = "YES (Elevated)" if prof.is_admin else "NO (Standard User)"
-        write_str = "YES (Full Access)" if prof.workspace_writable else "NO (Access Denied)"
+        write_str = (
+            "YES (Full Access)" if prof.workspace_writable else "NO (Access Denied)"
+        )
 
         print("\n" + "=" * 65)
         print(" WINDOWS EXECUTION AUTHORITY — AUTONOMOUS_WINDOWS PROFILE")
@@ -126,7 +129,9 @@ class WindowsAuthorityManager:
         print(f" USER           : {prof.user}")
         print(f" ADMIN          : {admin_str}")
         print(f" INTEGRITY      : {prof.integrity_level}")
-        print(f" POWERSHELL     : {prof.powershell_shell} ({prof.powershell_executable})")
+        print(
+            f" POWERSHELL     : {prof.powershell_shell} ({prof.powershell_executable})"
+        )
         print(f" EXEC POLICY    : {prof.execution_policy}")
         print(f" CMD            : {'YES' if prof.cmd_available else 'NO'}")
         print(f" GIT            : {'YES' if prof.git_available else 'NO'}")
@@ -137,32 +142,46 @@ class WindowsAuthorityManager:
             print(f" ELEVATION HINT : {prof.elevation_hint}")
         print("=" * 65 + "\n")
 
-
     def check_permission(self, operation: str) -> tuple[bool, str]:
         """Checks if the operation is permitted under current Windows execution authority."""
         op_lower = operation.lower()
         admin_required_ops = (
-            "sc create", "sc config", "sc delete", "netsh advfirewall", "diskpart",
-            "format ", "set-executionpolicy unrestricted", "takeown", "icacls /grant:r administrators",
-            "install-windowsfeature", "dism /online"
+            "sc create",
+            "sc config",
+            "sc delete",
+            "netsh advfirewall",
+            "diskpart",
+            "format ",
+            "set-executionpolicy unrestricted",
+            "takeown",
+            "icacls /grant:r administrators",
+            "install-windowsfeature",
+            "dism /online",
         )
         is_admin_req = any(kw in op_lower for kw in admin_required_ops)
-        
+
         if is_admin_req and not self._is_admin():
-            return False, f"Administrator privileges required for: '{operation}'. Launch with elevation: Start-Process powershell -Verb RunAs"
-        
+            return (
+                False,
+                f"Administrator privileges required for: '{operation}'. Launch with elevation: Start-Process powershell -Verb RunAs",
+            )
+
         return True, "Permitted under current Windows authority"
 
-    def request_elevated_helper(self, command: str, wait: bool = True) -> subprocess.CompletedProcess[str]:
+    def request_elevated_helper(
+        self, command: str, wait: bool = True
+    ) -> subprocess.CompletedProcess[str]:
         """Launches a Windows UAC elevated helper process via Start-Process powershell -Verb RunAs."""
         if sys.platform != "win32":
-            return subprocess.run(["sudo", "sh", "-c", command], capture_output=True, text=True)
-        
+            return subprocess.run(
+                ["sudo", "sh", "-c", command], capture_output=True, text=True
+            )
+
         escaped_cmd = command.replace('"', '`"')
         ps_cmd = f"Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile', '-Command', '{escaped_cmd}'"
         if wait:
             ps_cmd += " -Wait"
-        
+
         return subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd],
             capture_output=True,

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Credential-safe diagnostics shared across product boundaries."""
 
 import json

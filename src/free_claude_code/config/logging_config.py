@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Loguru-based structured logging configuration.
 
 Structured logs are written as JSON lines to a configurable path (default

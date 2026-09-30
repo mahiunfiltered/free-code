@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Base provider interface - extend this to implement your own provider."""
 
 from abc import ABC, abstractmethod
@@ -9,6 +7,10 @@ from dataclasses import dataclass
 from loguru import logger
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.config.constants import (
+    HTTP_FIRST_BYTE_TIMEOUT_DEFAULT,
+    HTTP_STREAM_IDLE_TIMEOUT_DEFAULT,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.diagnostics import (
     exception_cause_types,
@@ -38,6 +40,8 @@ class ProviderConfig:
     proxy: str | None
     log_raw_sse_events: bool
     log_api_error_tracebacks: bool
+    http_first_byte_timeout: float = HTTP_FIRST_BYTE_TIMEOUT_DEFAULT
+    http_stream_idle_timeout: float = HTTP_STREAM_IDLE_TIMEOUT_DEFAULT
 
 
 class BaseProvider(ABC):

@@ -18,7 +18,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 from loguru import logger
-from loguru._logger import context as _loguru_context
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_keys import ProviderKey
@@ -28,6 +27,7 @@ from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.core.request_context import current_claude_session_id
 from free_claude_code.core.storage import Store
 from free_claude_code.core.trace import trace_event
 
@@ -97,14 +97,6 @@ def failure_retry_after(failure: ExecutionFailure) -> float | None:
     """Provider-sent Retry-After seconds retained on the failure's raw cause."""
     cause = _raw_cause(failure)
     return _retry_after_seconds(cause) if cause is not None else None
-
-
-def current_claude_session_id() -> str | None:
-    """Claude session id bound by the API request middleware, if any."""
-    # ponytail: reads loguru's contextualize() vars (the request middleware binds
-    # claude_session_id there); pass it explicitly if providers ever get a request ctx.
-    value = _loguru_context.get().get("claude_session_id")
-    return value if isinstance(value, str) and value else None
 
 
 class _UsageSniffer:

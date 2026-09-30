@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Installed `fcc-cline` launcher for the stable Cline CLI."""
 
 import json

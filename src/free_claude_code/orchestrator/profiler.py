@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 """Real-time execution profiler and performance metric logger."""
 
 import json
 import time
-from dataclasses import asdict, dataclass, field
-from typing import Any, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Any
 
 from free_claude_code.orchestrator.models import Task, TaskState
 
@@ -46,7 +45,9 @@ class RuntimeProfiler:
         self.total_tokens_estimated: int = 0
         self.recovery_attempts: int = 0
 
-    def record_model_call(self, duration: float, model: str = "", tokens: int = 0) -> None:
+    def record_model_call(
+        self, duration: float, model: str = "", tokens: int = 0
+    ) -> None:
         self._model_latencies.append(duration)
         self.total_tokens_estimated += tokens
         self._metrics.append(
@@ -59,7 +60,9 @@ class RuntimeProfiler:
             )
         )
 
-    def record_tool_call(self, tool_name: str, duration: float, success: bool = True) -> None:
+    def record_tool_call(
+        self, tool_name: str, duration: float, success: bool = True
+    ) -> None:
         self._tool_latencies.append(duration)
         self._metrics.append(
             MetricRecord(
@@ -75,7 +78,9 @@ class RuntimeProfiler:
         elapsed = time.time() - self.start_time
         active = sum(1 for t in tasks if t.status == TaskState.RUNNING)
         completed = sum(1 for t in tasks if t.status == TaskState.COMPLETED)
-        blocked = sum(1 for t in tasks if t.status in (TaskState.BLOCKED, TaskState.FAILED))
+        blocked = sum(
+            1 for t in tasks if t.status in (TaskState.BLOCKED, TaskState.FAILED)
+        )
 
         avg_model = sum(self._model_latencies) / max(1, len(self._model_latencies))
         avg_tool = sum(self._tool_latencies) / max(1, len(self._tool_latencies))
@@ -90,7 +95,9 @@ class RuntimeProfiler:
 
         # Estimate remaining ETA
         remaining = len(tasks) - (completed + blocked)
-        eta = (remaining * (avg_model + avg_tool)) / max(1, active) if active > 0 else 0.0
+        eta = (
+            (remaining * (avg_model + avg_tool)) / max(1, active) if active > 0 else 0.0
+        )
 
         return ProfilerSnapshot(
             project_name=self.project_name,
@@ -106,16 +113,20 @@ class RuntimeProfiler:
             estimated_eta_seconds=eta,
         )
 
-    def export_baseline(self, filepath: str = "performance_baseline.json") -> dict[str, Any]:
+    def export_baseline(
+        self, filepath: str = "performance_baseline.json"
+    ) -> dict[str, Any]:
         """Exports complete performance baseline to JSON."""
         data = {
             "project_name": self.project_name,
             "timestamp": time.time(),
             "total_duration_seconds": time.time() - self.start_time,
             "total_model_requests": len(self._model_latencies),
-            "avg_model_latency_seconds": sum(self._model_latencies) / max(1, len(self._model_latencies)),
+            "avg_model_latency_seconds": sum(self._model_latencies)
+            / max(1, len(self._model_latencies)),
             "total_tool_calls": len(self._tool_latencies),
-            "avg_tool_latency_seconds": sum(self._tool_latencies) / max(1, len(self._tool_latencies)),
+            "avg_tool_latency_seconds": sum(self._tool_latencies)
+            / max(1, len(self._tool_latencies)),
             "total_tokens_estimated": self.total_tokens_estimated,
             "recovery_attempts": self.recovery_attempts,
             "metrics_count": len(self._metrics),

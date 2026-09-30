@@ -1,7 +1,6 @@
-from __future__ import annotations
-
 """Shared process helpers for installed client CLI launchers."""
 
+import contextlib
 import shutil
 import subprocess
 import sys
@@ -86,18 +85,22 @@ def run_client_process(
     process: subprocess.Popen[bytes] | None = None
     old_sigint = None
     paste_bridge = None
-    
+
     # Check if a large prompt is passed via -p / --print on Windows (> 2048 chars)
     # If so, convert it to stdin delivery to prevent exceeding the 32,767 char cmdline limit
     effective_command = list(command)
     effective_stdin = stdin_payload
-    
+
     for flag in ("-p", "--print"):
         if flag in effective_command:
             idx = effective_command.index(flag)
             if idx + 1 < len(effective_command):
                 prompt_val = effective_command[idx + 1]
-                if len(prompt_val) > 2048 or (sys.platform == "win32" and "\n" in prompt_val and len(prompt_val) > 1024):
+                if len(prompt_val) > 2048 or (
+                    sys.platform == "win32"
+                    and "\n" in prompt_val
+                    and len(prompt_val) > 1024
+                ):
                     # Extract to stdin
                     if effective_stdin is None:
                         effective_stdin = prompt_val
@@ -133,30 +136,29 @@ def run_client_process(
             # allowing the client (e.g. Claude Code, Codex) to handle Ctrl+C (cancel generation vs copy) directly.
             try:
                 old_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
-            except (ValueError, OSError):
+            except ValueError, OSError:
                 old_sigint = None
 
-        popen_kwargs: dict = {
-            "env": dict(env),
-        }
-        if effective_stdin is not None:
-            popen_kwargs["stdin"] = subprocess.PIPE
-
-        process = subprocess.Popen(effective_command, **popen_kwargs)
+        process = subprocess.Popen(
+            effective_command,
+            env=dict(env),
+            stdin=subprocess.PIPE if effective_stdin is not None else None,
+        )
         if process.pid:
             register_pid(process.pid)
 
         # Stream stdin payload if present
-        if effective_stdin is not None and process.stdin:
-            def _write_stdin():
-                try:
-                    process.stdin.write(effective_stdin.encode("utf-8"))
-                    process.stdin.flush()
-                    process.stdin.close()
-                except Exception:
-                    pass
-            t = threading.Thread(target=_write_stdin, daemon=True)
-            t.start()
+        stdin_pipe = process.stdin
+        if effective_stdin is not None and stdin_pipe is not None:
+            payload = effective_stdin.encode("utf-8")
+
+            def _write_stdin() -> None:
+                with contextlib.suppress(Exception):
+                    stdin_pipe.write(payload)
+                    stdin_pipe.flush()
+                    stdin_pipe.close()
+
+            threading.Thread(target=_write_stdin, daemon=True).start()
 
         return_code = process.wait()
     except FileNotFoundError:
@@ -172,15 +174,11 @@ def run_client_process(
         raise
     finally:
         if paste_bridge is not None:
-            try:
+            with contextlib.suppress(Exception):
                 paste_bridge.stop()
-            except Exception:
-                pass
         if old_sigint is not None:
-            try:
+            with contextlib.suppress(ValueError, OSError):
                 signal.signal(signal.SIGINT, old_sigint)
-            except (ValueError, OSError):
-                pass
         if process is not None and process.pid:
             unregister_pid(process.pid)
 

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Admin configuration manifest."""
 
 from collections.abc import Iterable
@@ -151,6 +149,17 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "ULTRA_ANALYSIS_MODEL",
+        "Ultra Analysis Model",
+        "models",
+        "optional_model",
+        settings_attr="ultra_analysis_model",
+        description=(
+            "Model the Ultra lead agent uses to route and plan a request, always "
+            "with reasoning off. Select None to use the Default Model."
+        ),
+    ),
+    ConfigFieldSpec(
         "REASONING_POLICY",
         "Reasoning Policy",
         "reasoning",
@@ -270,6 +279,29 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_connect_timeout",
+    ),
+    ConfigFieldSpec(
+        "HTTP_FIRST_BYTE_TIMEOUT",
+        "HTTP First-Byte Timeout",
+        "runtime",
+        "number",
+        settings_attr="http_first_byte_timeout",
+        description=(
+            "Seconds to wait for the first upstream stream chunk before failing "
+            "over. SSE keep-alives do not count."
+        ),
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "HTTP_STREAM_IDLE_TIMEOUT",
+        "HTTP Stream Idle Timeout",
+        "runtime",
+        "number",
+        settings_attr="http_stream_idle_timeout",
+        description=(
+            "Maximum seconds between upstream stream chunks once streaming started."
+        ),
+        advanced=True,
     ),
     ConfigFieldSpec(
         "HOST",

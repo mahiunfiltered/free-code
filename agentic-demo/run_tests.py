@@ -15,8 +15,8 @@ from orchestrator.coordinator import AgentOrchestrator
 async def test_base_agent():
     from agents.base import BaseAgent
     class TestAgent(BaseAgent):
-        async def process(self, msg):
-            return AgentMessage(self.name, msg.sender, f"Processed: {msg.content}")
+        async def process(self, message: AgentMessage) -> AgentMessage:
+            return AgentMessage(self.name, message.sender, f"Processed: {message.content}")
     agent = TestAgent("Test", "Testing")
     msg = AgentMessage("user", "Test", "Hello")
     response = await agent.process(msg)
@@ -55,7 +55,7 @@ async def test_reviewer():
     code = 'def main():\n    """Main entry"""\n    print("hi")\n\nif __name__ == "__main__":\n    main()'
     msg = AgentMessage("user", "Reviewer", code)
     response = await agent.process(msg)
-    assert response.content["approved"] is True
+    assert (response.metadata or {})["approved"] is True
     print("[PASS] test_reviewer")
 
 

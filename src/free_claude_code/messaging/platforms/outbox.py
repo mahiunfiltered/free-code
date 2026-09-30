@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared queued delivery helper for messaging platforms."""
 
 import asyncio

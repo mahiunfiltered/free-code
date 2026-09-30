@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Classification for provider proxies owned by the provider catalog."""
 
 from collections.abc import Mapping
@@ -22,7 +20,8 @@ def _provider_proxy_env_keys() -> tuple[str, ...]:
                 f"Settings field {descriptor.proxy_attr!r} needs one string alias"
             )
         keys.append(alias)
-    return tuple(keys)
+    # Several providers may share one proxy setting (openai / openai_api).
+    return tuple(dict.fromkeys(keys))
 
 
 PROVIDER_PROXY_ENV_KEYS = _provider_proxy_env_keys()
@@ -38,7 +37,7 @@ def invalid_provider_proxy_keys(values: Mapping[str, str]) -> tuple[str, ...]:
             continue
         try:
             proxy = httpx.Proxy(value)
-        except (httpx.InvalidURL, ValueError):
+        except httpx.InvalidURL, ValueError:
             invalid.append(key)
             continue
         if not proxy.url.host:

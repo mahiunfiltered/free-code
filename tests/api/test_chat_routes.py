@@ -312,6 +312,8 @@ def test_task_routes_404_for_unknown_tasks(client: TestClient):
     assert client.get("/chat/api/tasks/nope/evidence").status_code == 404
     assert client.post("/chat/api/tasks/nope/revert").status_code == 404
     assert client.post("/chat/api/tasks/nope/cancel").status_code == 404
+    assert client.post("/chat/api/tasks/nope/resume").status_code == 404
+    assert client.post("/chat/api/tasks/nope/resume", json={}).status_code == 404
     clarify = client.post("/chat/api/tasks/nope/clarify", json={"answers": "x"})
     assert clarify.status_code == 404
     assert (
@@ -364,7 +366,13 @@ def test_verified_task_over_http(
         assert started["permission_mode"] == "acceptEdits"
         assert started["budget"]["max_turns"] == 40
         assert started["usage"]["turns"] == 0
+        assert started["preset_permission_mode"] == "acceptEdits"
         live_id = started["live_id"]
+        looser = client.post(
+            f"/chat/api/live/{live_id}/control",
+            json={"request": {"subtype": "set_permission_mode", "mode": "auto"}},
+        )
+        assert looser.status_code == 400 and "stricter" in looser.text
 
         sent = client.post(
             f"/chat/api/live/{live_id}/messages",
@@ -409,7 +417,163 @@ def test_verified_task_over_http(
         ).json()
         assert normal == {"ok": True, "task_id": None}
 
+        resumed = client.post(f"/chat/api/tasks/{task_id}/resume", json={})
+        assert resumed.status_code == 400 and "needs your attention" in resumed.text
+
         reverted = client.post(f"/chat/api/tasks/{task_id}/revert").json()
         assert reverted == {"reverted": ["calc.py"]}
         assert client.post(f"/chat/api/tasks/{task_id}/cancel").json() == {"ok": True}
+        client.delete(f"/chat/api/live/{live_id}")
+
+
+def test_parallel_node_permission_answered_via_node_live_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    fake = fake_claude(tmp_path)
+    monkeypatch.setattr(interactive.shutil, "which", lambda _name: fake)
+    repo = make_repo(tmp_path)
+    app = create_test_app(Settings(port=1))
+    workbench = runtime_for_app(app).workbench
+    workbench.coordinator.options.profile = pytest_profile(repo)
+
+    with TestClient(app, client=("127.0.0.1", 50000), base_url=LOCAL) as client:
+        live_id = client.post("/chat/api/live", json={"cwd": str(repo)}).json()[
+            "live_id"
+        ]
+        task_id = client.post(
+            f"/chat/api/live/{live_id}/messages",
+            json={
+                "content": f"Fix add in calc.py so the tests pass\n{FIX}\nASK Bash",
+                "mode": "parallel",
+                "strategy": "economy",
+            },
+        ).json()["task_id"]
+
+        # The node session lives in the same registry as the chat.
+        deadline = time.monotonic() + 60
+        node_ids: list[str] = []
+        while not node_ids:
+            assert time.monotonic() < deadline, "node session never started"
+            time.sleep(0.1)
+            live = client.get("/chat/api/sessions").json()["live"]
+            node_ids = [s["live_id"] for s in live if s["live_id"] != live_id]
+        [node_id] = node_ids
+        url = f"/chat/api/live/{node_id}/permissions/perm_Bash"
+        decision = {"decision": {"behavior": "allow", "updatedInput": {}}}
+        cross_site = client.post(
+            url, json=decision, headers={"Origin": "https://evil.example"}
+        )
+        assert cross_site.status_code == 403
+        answered = client.post(url, json=decision)
+        while answered.status_code == 400:  # not asked yet
+            assert time.monotonic() < deadline, answered.text
+            time.sleep(0.1)
+            answered = client.post(url, json=decision)
+        assert answered.json() == {"ok": True}
+
+        status = client.get(f"/chat/api/tasks/{task_id}").json()["task"]["status"]
+        while status not in ("VERIFIED", "FAILED", "RECOVERY_REQUIRED"):
+            assert time.monotonic() < deadline, status
+            time.sleep(0.1)
+            status = client.get(f"/chat/api/tasks/{task_id}").json()["task"]["status"]
+        assert status == "VERIFIED"
+        [record] = workbench.audit.recent(action="permission.decision")
+        assert (record.resource, record.decision) == ("Bash", "allow")
+        assert json.loads(record.payload_json)["live_id"] == node_id
+        client.delete(f"/chat/api/live/{live_id}")
+
+
+def test_project_reports_git_branch_and_dirty(client: TestClient, tmp_path: Path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert client.get("/chat/api/project", params={"cwd": str(plain)}).json() == {
+        "git": False,
+        "branch": None,
+        "dirty": False,
+    }
+    repo = make_repo(tmp_path)
+    clean = client.get("/chat/api/project", params={"cwd": str(repo)}).json()
+    assert clean == {"git": True, "branch": "main", "dirty": False}
+    (repo / "new.txt").write_text("x", "utf-8")
+    dirty = client.get("/chat/api/project", params={"cwd": str(repo / "tests")})
+    assert dirty.json() == {"git": True, "branch": "main", "dirty": True}
+    missing = client.get("/chat/api/project", params={"cwd": str(tmp_path / "nope")})
+    assert missing.status_code == 400
+
+
+def test_start_uses_preset_mode_unless_a_stricter_one_is_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    fake = fake_claude(tmp_path)
+    monkeypatch.setattr(interactive.shutil, "which", lambda _name: fake)
+    app = create_test_app()
+    with TestClient(app, client=("127.0.0.1", 50000), base_url=LOCAL) as client:
+        cases = [
+            ("restricted", None, "dontAsk"),
+            ("restricted", "bypassPermissions", "dontAsk"),
+            ("restricted", "plan", "plan"),
+            ("workspace", "default", "default"),
+            ("privileged", None, "bypassPermissions"),
+            (None, None, "default"),
+            (None, "dontAsk", "dontAsk"),
+        ]
+        for preset, mode, expected in cases:
+            started = client.post(
+                "/chat/api/live",
+                json={
+                    "cwd": str(tmp_path),
+                    "policy_preset": preset,
+                    "permission_mode": mode,
+                },
+            ).json()
+            assert started["permission_mode"] == expected, (preset, mode)
+            client.delete(f"/chat/api/live/{started['live_id']}")
+
+
+def test_ultra_task_over_http_runs_directly_when_analysis_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    fake = fake_claude(tmp_path)
+    monkeypatch.setattr(interactive.shutil, "which", lambda _name: fake)
+    repo = make_repo(tmp_path)
+    # Port 1: the lead agent's model call fails fast, so Ultra runs directly.
+    app = create_test_app(Settings(port=1))
+
+    with TestClient(app, client=("127.0.0.1", 50000), base_url=LOCAL) as client:
+        live_id = client.post("/chat/api/live", json={"cwd": str(repo)}).json()[
+            "live_id"
+        ]
+        url = f"/chat/api/live/{live_id}/messages"
+        for bad in (0, 7):
+            invalid = client.post(
+                url, json={"content": "x", "mode": "ultra", "max_parallel": bad}
+            )
+            assert invalid.status_code == 422
+        sent = client.post(
+            url,
+            json={
+                "content": f"Fix add in calc.py\n{FIX}",
+                "mode": "ultra",
+                "max_parallel": 3,
+                "verify": False,
+            },
+        ).json()
+        task_id = sent["task_id"]
+        assert sent["ok"] is True and task_id
+
+        deadline = time.monotonic() + 60
+        detail = client.get(f"/chat/api/tasks/{task_id}").json()
+        while detail["task"]["status"] not in ("COMPLETED", "FAILED", "CANCELLED"):
+            assert time.monotonic() < deadline, detail["task"]
+            time.sleep(0.1)
+            detail = client.get(f"/chat/api/tasks/{task_id}").json()
+        assert detail["task"]["status"] == "COMPLETED"
+        assert detail["task"]["mode"] == "ultra"
+        [analysis] = [e for e in detail["events"] if e["type"] == "ultra.analysis"]
+        assert analysis["payload"]["route"] == "direct"
+        assert analysis["payload"]["degraded"] is True
+        assert "return a + b" in (repo / "calc.py").read_text("utf-8")
         client.delete(f"/chat/api/live/{live_id}")

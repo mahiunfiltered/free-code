@@ -17,6 +17,7 @@ from free_claude_code.cli.managed.interactive import (
     InteractiveClaudeSessions,
     build_interactive_claude_argv,
 )
+from free_claude_code.core.json_types import JsonObject
 
 FAKE = Path(__file__).with_name("fake_claude_stream.py")
 
@@ -572,6 +573,19 @@ async def test_policy_preset_compiles_settings_and_mode(
             cwd=str(tmp_path), policy_preset="workspace", permission_mode="plan"
         )
         assert explicit.permission_mode == "plan"
+        looser = await registry.start(
+            cwd=str(tmp_path), policy_preset="workspace", permission_mode="auto"
+        )
+        assert looser.permission_mode == "acceptEdits"
+        assert looser.snapshot()["preset_permission_mode"] == "acceptEdits"
+        with pytest.raises(ChatSessionError, match="stricter"):
+            await looser.control(
+                {"subtype": "set_permission_mode", "mode": "bypassPermissions"}
+            )
+        with pytest.raises(ChatSessionError, match="Unknown permission mode"):
+            await looser.control({"subtype": "set_permission_mode", "mode": "yolo"})
+        await looser.control({"subtype": "set_permission_mode", "mode": "dontAsk"})
+        assert looser.permission_mode == "dontAsk"
         with pytest.raises(ChatSessionError, match="Unknown preset"):
             await registry.start(cwd=str(tmp_path), policy_preset="bogus")
         assert calls[0] == ("workspace", str(tmp_path))
@@ -665,3 +679,35 @@ async def test_observer_sees_events_and_failures_are_contained(tmp_path: Path):
     finally:
         await events.aclose()
         await registry.stop_all()
+
+
+def test_plan_approval_mode_switch_is_clamped_to_the_preset():
+    def session(preset_mode: str | None) -> InteractiveClaudeSession:
+        return InteractiveClaudeSession(
+            live_id="l",
+            cwd=".",
+            permission_mode="plan",
+            model=None,
+            resume_session_id=None,
+            policy_preset="restricted" if preset_mode else None,
+            preset_permission_mode=preset_mode,
+        )
+
+    decision: JsonObject = {
+        "behavior": "allow",
+        "updatedPermissions": [
+            {"type": "setMode", "mode": "acceptEdits", "destination": "session"},
+            {"type": "addRules", "rules": []},
+        ],
+    }
+    clamped = session("dontAsk")._clamp_mode_updates(decision)
+    assert clamped["updatedPermissions"] == [
+        {"type": "setMode", "mode": "dontAsk", "destination": "session"},
+        {"type": "addRules", "rules": []},
+    ]
+    assert session(None)._clamp_mode_updates(decision) is decision
+    stricter: JsonObject = {
+        "behavior": "allow",
+        "updatedPermissions": [{"type": "setMode", "mode": "plan"}],
+    }
+    assert session("acceptEdits")._clamp_mode_updates(stricter) == stricter

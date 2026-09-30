@@ -4,6 +4,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from free_claude_code.workbench.ignore import split_ignored
+
 WORKTREE_DIR = ".fcc-worktrees"
 BRANCH_PREFIX = "fcc"
 
@@ -87,11 +89,40 @@ def remove_worktree(repo: Path, path: Path, branch: str | None) -> None:
         git(repo, "branch", "-D", branch, check=False)
 
 
-def commit_all(path: Path, message: str) -> bool:
-    """Stage everything and commit; False when there was nothing to commit."""
+def commit_all(path: Path, message: str, ignore: list[str] | None = None) -> bool:
+    """Stage everything but ``ignore`` globs and commit; False when nothing to commit.
+
+    Ignored (tool-state) paths stay as they are in the worktree, uncommitted.
+    """
 
     git(path, "add", "-A")
-    if not git(path, "status", "--porcelain"):
+    if ignore:
+        staged = git(path, "diff", "--cached", "--name-only", "--no-renames", "-z")
+        _, ignored = split_ignored([p for p in staged.split("\0") if p], ignore)
+        for i in range(0, len(ignored), 100):  # keep the command line short
+            git(path, "reset", "-q", "--", *ignored[i : i + 100])
+    if not git(path, "diff", "--cached", "--name-only"):
         return False
     git(path, "commit", "-q", "-m", message)
     return True
+
+
+def uncommitted(path: Path) -> list[str]:
+    """Paths that differ from HEAD (modified, deleted or untracked, not gitignored)."""
+
+    raw = git(path, "ls-files", "-z", "-o", "-m", "-d", "--exclude-standard")
+    return sorted({p for p in raw.split("\0") if p})
+
+
+def reset_working_branch(repo: Path, branch: str, base_commit: str) -> list[str]:
+    """Drop a parallel run's integration commits from its working branch.
+
+    ``git reset --keep`` moves ``branch`` back to ``base_commit`` and refuses to
+    touch uncommitted edits in the affected files. Returns the files the commits changed.
+    """
+
+    if current_branch(repo) != branch:
+        raise GitError(f"Check out {branch} to revert this parallel task.")
+    changed = git(repo, "diff", "--name-only", "--no-renames", base_commit, "HEAD")
+    git(repo, "reset", "-q", "--keep", base_commit)
+    return [path for path in changed.splitlines() if path]

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """OpenAI-chat streamed usage request and extraction helpers."""
 
 import json

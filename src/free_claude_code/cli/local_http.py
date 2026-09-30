@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Direct HTTP and child-environment policy for FCC-local traffic."""
 
 from collections.abc import Mapping

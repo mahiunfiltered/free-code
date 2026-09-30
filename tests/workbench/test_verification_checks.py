@@ -523,3 +523,43 @@ def test_preserve_inside_an_allowed_file_is_left_to_the_tests(tmp_path: Path):
     contract.scope.allowed_paths = ["other.py"]
     [row] = gap_matrix(contract, diff_since(cp), _passed_tests(), False)
     assert row.status == "failed"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Modify any file outside calc.py and tests/test_calc.py",
+        "change files other than calc.py or tests/test_calc.py",
+        "edit anything except calc.py and tests/test_calc.py",
+    ],
+)
+def test_must_not_outside_phrasing_forbids_only_other_paths(tmp_path: Path, text):
+    repo = make_repo(
+        tmp_path,
+        {"calc.py": "a\n", "tests/test_calc.py": "t\n", "other.py": "o\n"},
+    )
+    cp = create_checkpoint(repo)
+    contract = IntentContract(goal="g", must_not=[text])
+    (repo / "calc.py").write_text("fixed\n", encoding="utf-8")
+    (repo / "tests/test_calc.py").write_text("t2\n", encoding="utf-8")
+    [row] = gap_matrix(contract, diff_since(cp), _passed_tests(), False)
+    assert row.status == "covered", row.evidence
+    (repo / "other.py").write_text("o2\n", encoding="utf-8")
+    [row] = gap_matrix(contract, diff_since(cp), _passed_tests(), False)
+    assert row.status == "failed"
+    assert (
+        "other.py" in row.evidence[-1]
+        and "calc.py" not in row.evidence[-1].split(": ")[-1]
+    )
+
+
+def test_must_not_modify_path_still_forbids_that_path(tmp_path: Path):
+    repo = make_repo(tmp_path, {"calc.py": "a\n", "legacy/old.py": "l\n"})
+    cp = create_checkpoint(repo)
+    contract = IntentContract(goal="g", must_not=["don't modify legacy/"])
+    (repo / "calc.py").write_text("fixed\n", encoding="utf-8")
+    [row] = gap_matrix(contract, diff_since(cp), _passed_tests(), False)
+    assert row.status == "covered"
+    (repo / "legacy/old.py").write_text("l2\n", encoding="utf-8")
+    [row] = gap_matrix(contract, diff_since(cp), _passed_tests(), False)
+    assert row.status == "failed" and "legacy/old.py" in row.evidence[-1]

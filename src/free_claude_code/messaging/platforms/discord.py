@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Discord messaging runtime."""
 
 import asyncio

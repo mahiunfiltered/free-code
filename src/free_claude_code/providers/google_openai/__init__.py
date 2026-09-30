@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared Google OpenAI-compatible provider family."""
 
 from .provider import GoogleOpenAIProvider

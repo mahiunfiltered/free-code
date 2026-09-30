@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Google Vertex AI provider using the OpenAI-compatible Chat Completions API."""
 
 from dataclasses import replace

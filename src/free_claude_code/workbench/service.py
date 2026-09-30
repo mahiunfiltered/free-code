@@ -21,8 +21,9 @@ from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.core.storage import Store
 from free_claude_code.core.vault import VaultError, validate_secret_name
 from free_claude_code.workbench.audit import AuditLog
-from free_claude_code.workbench.checkpoints import git
+from free_claude_code.workbench.checkpoints import git, project_status
 from free_claude_code.workbench.coordinator import (
+    AnalysisClientFactory,
     CoordinatorOptions,
     ModelClientFactory,
     TaskCoordinator,
@@ -103,6 +104,7 @@ class WorkbenchService:
         *,
         sessions: InteractiveClaudeSessions | None = None,
         model_client_factory: ModelClientFactory | None = None,
+        analysis_client_factory: AnalysisClientFactory | None = None,
         usage_lookup: UsageLookup | None = None,
         options: CoordinatorOptions | None = None,
     ) -> None:
@@ -117,22 +119,69 @@ class WorkbenchService:
             memory=self.memory,
             sessions=sessions,
             model_client_factory=model_client_factory,
+            analysis_client_factory=analysis_client_factory,
             options=options,
         )
 
     # ----- chat tasks -------------------------------------------------------
 
     async def start_task(
-        self, live_id: str, content: JsonValue, *, mode: str, strategy: str
+        self,
+        live_id: str,
+        content: JsonValue,
+        *,
+        mode: str,
+        strategy: str,
+        verify: bool = False,
+        max_parallel: int | None = None,
     ) -> str | None:
-        """Start a verified/parallel task; None when the live session is unknown."""
+        """Start a verified/parallel/ultra task; None when the live session is unknown."""
 
         session = self._sessions.get(live_id) if self._sessions else None
         if session is None:
             return None
         return self.coordinator.start(
-            session, _prompt_text(content), mode=mode, strategy=strategy
+            session,
+            _prompt_text(content),
+            mode=mode,
+            strategy=strategy,
+            images=_image_blocks(content),
+            verify=verify,
+            max_parallel=max_parallel,
         )
+
+    async def resume(self, task_id: str, live_id: str | None = None) -> bool:
+        """One more attempt for a RECOVERY_REQUIRED task; False if the task is unknown.
+
+        Runs on ``live_id``, or else on the live chat of the task's Claude session.
+        """
+
+        if not self._exists(task_id):
+            return False
+        session = self._live_session(task_id, live_id)
+        if session is None:
+            raise InvalidRequestError("Open this task's chat to resume it.")
+        self.coordinator.resume(session, task_id)
+        return True
+
+    def project(self, cwd: str) -> JsonObject:
+        if not Path(cwd).is_dir():
+            raise InvalidRequestError(f"Folder does not exist: {cwd}")
+        return project_status(cwd)
+
+    def close_interrupted(self) -> list[str]:
+        """Startup: tasks left mid-run by a previous server process stop waiting."""
+
+        closed = self.tasks.close_interrupted("server restarted")
+        for task_id, before, after in closed:
+            self.audit.append(
+                actor="workbench",
+                action="task.interrupted",
+                resource=task_id,
+                outcome=after,
+                payload={"from": before, "reason": "server restarted"},
+            )
+        return [task_id for task_id, _, _ in closed]
 
     async def clarify(self, task_id: str, answers: str) -> bool:
         if not self._exists(task_id):
@@ -215,7 +264,12 @@ class WorkbenchService:
             usage = self._usage_lookup(session.session_id)
             if usage is not None:
                 session.publish({"type": "fcc_usage", **usage})
-        elif kind == "fcc_permission_resolved" and event.get("behavior"):
+        elif (
+            kind == "fcc_permission_resolved"
+            and event.get("behavior")
+            # A node's answer is audited on the node session; the chat copy is a relay.
+            and "node_id" not in event
+        ):
             self.audit.append(
                 actor="user",
                 action="permission.decision",
@@ -321,6 +375,22 @@ class WorkbenchService:
 
     # ----- helpers ----------------------------------------------------------
 
+    def _live_session(
+        self, task_id: str, live_id: str | None
+    ) -> InteractiveClaudeSession | None:
+        if self._sessions is None:
+            return None
+        if live_id:
+            return self._sessions.get(live_id)
+        session_id = self.tasks.get(task_id).session_id
+        for session in self._sessions.live_sessions():
+            if not session.exited and session_id in (
+                session.session_id,
+                session.live_id,
+            ):
+                return session
+        return None
+
     def _exists(self, task_id: str) -> bool:
         try:
             self.tasks.get(task_id)
@@ -349,6 +419,16 @@ def _prompt_text(content: JsonValue) -> str:
             if isinstance(block, dict) and block.get("type") == "text"
         )
     return ""
+
+
+def _image_blocks(content: JsonValue) -> list[JsonObject]:
+    if not isinstance(content, list):
+        return []
+    return [
+        block
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "image"
+    ]
 
 
 def _events_json(events: list[TaskEvent]) -> list[JsonValue]:

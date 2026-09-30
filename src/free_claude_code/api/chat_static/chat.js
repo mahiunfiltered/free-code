@@ -16,8 +16,16 @@ const MODES = [
   { value: "plan", label: "Plan mode", hint: "Explore and plan, no changes" },
   { value: "auto", label: "Auto mode", hint: "A classifier approves safe actions" },
   { value: "bypassPermissions", label: "Bypass permissions", hint: "Never ask. Use with care" },
+  { value: "dontAsk", label: "Don't ask (read-only)", hint: "Anything that would ask is denied" },
 ];
 const CYCLE_MODES = ["default", "acceptEdits", "plan"];
+// Least to most strict (core/claude_permission_modes.py). A policy preset's mode is
+// the loosest one its chat may switch to.
+const MODE_ORDER = ["bypassPermissions", "auto", "acceptEdits", "default", "dontAsk", "plan"];
+const modeAllowed = (mode) => {
+  const floor = state.session.preset_permission_mode;
+  return !floor || MODE_ORDER.indexOf(mode) >= MODE_ORDER.indexOf(floor);
+};
 
 const store = {
   get(key, fallback) {
@@ -50,9 +58,13 @@ const state = {
   source: null,
   skipReplay: false,
   attachments: [],
-  // Run mode for the next message: normal | verified | parallel (+ parallel strategy).
-  runMode: store.get("fcc.runMode", "normal"),
+  // Run mode for the next message: ultra (default) | normal | verified | parallel (+ parallel strategy).
+  runMode: store.get("fcc.runMode", "ultra"),
   strategy: store.get("fcc.strategy", "balanced"),
+  // Ultra: concurrent sub-agents (1-6) and whether to run the verification gate.
+  ultraParallel: Math.min(6, Math.max(1, Math.floor(Number(store.get("fcc.ultraParallel", "4"))) || 4)),
+  ultraVerify: store.get("fcc.ultraVerify", "0") === "1",
+  pendingEcho: null, // text of an Ultra message already shown; its fcc_user echo is skipped
   // Session settings sent on the next session start.
   policy: store.get("fcc.policy", ""),
   budget: readJson(store.get("fcc.budget", "{}")),
@@ -257,7 +269,30 @@ function currentTurn() {
   return view.turn;
 }
 
+const userText = (message) =>
+  typeof message?.content === "string"
+    ? message.content
+    : (Array.isArray(message?.content) ? message.content : []).filter((b) => b?.type === "text").map((b) => b.text).join("\n");
+
+// Ultra's lead-agent prompt (workbench/ultra.py): the user's request plus sub-agent reports.
+const ULTRA_REPORT = /^<fcc_ultra_report task_id="([^"]*)">\n<user_request>\n([\s\S]*?)\n<\/user_request>\n/;
+
+function renderUltraReport(taskId, request, full) {
+  const task = view.tasks.get(taskId);
+  // Saved transcripts and reconnects never saw the optimistic bubble: show the request.
+  if (!task?.requestShown) {
+    renderUser({ content: request });
+    if (task) task.requestShown = true;
+  }
+  const details = el("details", "ultra-report");
+  details.append(el("summary", "", "Sub-agent reports sent to the lead agent"), el("pre", "pre", full.replace(ULTRA_REPORT, "").trim()));
+  view.turn = null;
+  return append(details);
+}
+
 function renderUser(message) {
+  const report = userText(message).match(ULTRA_REPORT);
+  if (report) return renderUltraReport(report[1], report[2], userText(message));
   view.turn = null;
   const wrap = el("div", "msg-user");
   const bubble = el("div", "bubble");
@@ -280,7 +315,7 @@ function renderUser(message) {
     }
   }
   wrap.append(bubble);
-  append(wrap);
+  return append(wrap);
 }
 
 function proseNode(text, streaming) {
@@ -698,27 +733,62 @@ function applyUsage(usage) {
 
 /* -------------------------------------------------- permission prompts */
 
-function renderPermission(event) {
+// Node prompts (fcc_node_permission) are keyed by the node's live id too: request ids are per session.
+const promptKey = (event) => (event.live_id ? `${event.live_id}:${event.request_id}` : event.request_id);
+
+// `node` = {liveId, nodeId} for a Parallel-mode step's prompt, answered on the node's session.
+function renderPermission(event, node = null) {
   const request = event.request || {};
   const id = event.request_id;
-  if (view.prompts.has(id)) return;
+  const key = node ? promptKey(event) : id;
+  if (view.prompts.has(key)) return;
   const tool = request.tool_name;
   const input = request.input || {};
   const card = el("div", "prompt-card");
-  view.prompts.set(id, card);
+  view.prompts.set(key, card);
+  if (node) Object.assign(card.dataset, { liveId: node.liveId, key, nodeId: node.nodeId });
   if (tool === "AskUserQuestion") buildQuestionCard(card, id, input);
   else if (tool === "ExitPlanMode") buildPlanCard(card, id, input);
   else buildToolPermissionCard(card, id, request);
+  if (node) {
+    const title = card.querySelector("h4");
+    title.textContent = tool === "AskUserQuestion" || tool === "ExitPlanMode"
+      ? `Step ${node.nodeId}: ${title.textContent}`
+      : `Step ${node.nodeId} wants to run ${prettyToolName(tool || "tool")}`;
+  }
   view.turn = null;
   append(card);
   card.querySelector("button, input")?.focus({ preventScroll: true });
 }
 
+function renderNodePermission(event) {
+  renderPermission(event, { liveId: String(event.live_id), nodeId: String(event.node_id) });
+  setNodeWaiting(event, event.request?.tool_name || "tool");
+}
+
+function resolveNodePermission(event) {
+  setNodeWaiting(event, null);
+  resolvePrompt(promptKey(event), event.behavior === "deny" ? "denied" : event.behavior ? "" : "no longer pending");
+}
+
+// The task graph shows a node as "waiting for approval" while any of its prompts is open.
+function setNodeWaiting(event, tool) {
+  const task = view.tasks.get(String(event.task_id));
+  const n = task?.orch?.nodes.get(String(event.node_id));
+  if (!n) return;
+  n.waiting ||= new Map();
+  if (tool) n.waiting.set(promptKey(event), tool);
+  else n.waiting.delete(promptKey(event));
+  renderTaskCard(task, false);
+  scheduleVerify();
+}
+
 async function answer(id, decision, card, label) {
   card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  const liveId = card.dataset.liveId || state.liveId;
   try {
-    await api(`/chat/api/live/${state.liveId}/permissions/${encodeURIComponent(id)}`, { method: "POST", body: { decision } });
-    resolvePrompt(id, label);
+    await api(`/chat/api/live/${liveId}/permissions/${encodeURIComponent(id)}`, { method: "POST", body: { decision } });
+    resolvePrompt(card.dataset.key || id, label);
   } catch (err) {
     card.querySelectorAll("button").forEach((b) => (b.disabled = false));
     status(err.message, true);
@@ -812,14 +882,16 @@ function buildPlanCard(card, id, input) {
   const actions = el("div", "prompt-actions");
   const setMode = (mode) => [{ type: "setMode", mode, destination: "session" }];
   const auto = el("button", "btn primary", "Yes, auto-accept edits");
+  // A step's plan changes the step's mode, not this chat's.
+  const local = (mode) => { if (!card.dataset.liveId) applyModeLocally(mode); };
   auto.onclick = () => {
     answer(id, { behavior: "allow", updatedInput: input, updatedPermissions: setMode("acceptEdits") }, card, "approved");
-    applyModeLocally("acceptEdits");
+    local("acceptEdits");
   };
   const manual = el("button", "btn", "Yes, approve each edit");
   manual.onclick = () => {
     answer(id, { behavior: "allow", updatedInput: input, updatedPermissions: setMode("default") }, card, "approved");
-    applyModeLocally("default");
+    local("default");
   };
   const feedback = el("input", "feedback");
   feedback.placeholder = "Tell Claude what to change";
@@ -836,21 +908,30 @@ function handleEvent(event) {
     // Saved transcript already rendered: only pick up state and still-open prompts.
     if (event.type === "fcc_replay_end") { state.skipReplay = false; return; }
     // Task events still rebuild the Verification panel; inline cards are skipped (the transcript has no anchors).
-    if (!["fcc_state", "fcc_initialize", "control_request", "fcc_permission_resolved", "system", "fcc_usage"].includes(event.type) && !TASK_EVENTS.has(event.type)) return;
+    if (!["fcc_state", "fcc_initialize", "control_request", "fcc_node_permission", "fcc_permission_resolved", "system", "fcc_usage"].includes(event.type) && !TASK_EVENTS.has(event.type)) return;
     if (event.type === "system" && event.subtype !== "init") return;
   }
   switch (event.type) {
     case "fcc_replay_end": return;
     case "fcc_state": return applyLiveState(event);
     case "fcc_initialize": return applyInitialize(event.response || {});
-    case "fcc_user": setWorking(true); return renderUser(event.message || {});
+    case "fcc_user":
+      setWorking(true);
+      if (state.pendingEcho !== null && userText(event.message) === state.pendingEcho) {
+        state.pendingEcho = null; // Ultra ran it directly; the bubble is already shown
+        return;
+      }
+      return renderUser(event.message || {});
     case "stream_event": return handleStreamEvent(event);
     case "assistant": return renderAssistant(event);
     case "user": return renderToolResults(event);
     case "control_request":
       if (event.request?.subtype === "can_use_tool") renderPermission(event);
       return;
-    case "fcc_permission_resolved": return resolvePrompt(event.request_id, event.behavior === "deny" ? "denied" : "");
+    case "fcc_node_permission": return renderNodePermission(event);
+    case "fcc_permission_resolved":
+      if (event.node_id != null) return resolveNodePermission(event);
+      return resolvePrompt(event.request_id, event.behavior === "deny" ? "denied" : "");
     case "result":
       setWorking(false);
       refreshSessions();
@@ -902,7 +983,7 @@ function applyLiveState(snapshot) {
   if (snapshot.session_id) state.sessionId = snapshot.session_id;
   if (snapshot.permission_mode) state.mode = snapshot.permission_mode;
   if (snapshot.model) state.model = snapshot.model;
-  for (const key of ["policy_preset", "budget", "usage"]) if (key in snapshot) state.session[key] = snapshot[key];
+  for (const key of ["policy_preset", "preset_permission_mode", "budget", "usage"]) if (key in snapshot) state.session[key] = snapshot[key];
   setWorking(state.busy);
   renderControls();
   markActiveSession();
@@ -980,7 +1061,8 @@ async function startLive() {
     method: "POST",
     body: {
       cwd: state.cwd || state.home,
-      permission_mode: state.mode,
+      // With a policy preset the server runs the preset's mode; mid-chat you can still pick a stricter one.
+      permission_mode: state.policy ? null : state.mode,
       model: store.get("fcc.model", "") || null,
       resume_session_id: state.sessionId,
       policy_preset: state.policy || null,
@@ -1162,6 +1244,12 @@ async function send() {
   const text = input.value.trim();
   if (!text && !state.attachments.length) return;
   if (state.busy) return;
+  if (state.runMode === "verified" || state.runMode === "parallel") await checkProject(true);
+  const blocker = projectBlocker();
+  if (blocker?.block) {
+    status(blocker.text, true);
+    return;
+  }
   const content = state.attachments.length
     ? [...state.attachments.map((a) => ({ type: "image", source: { type: "base64", media_type: a.type, data: a.data } })), ...(text ? [{ type: "text", text }] : [])]
     : text;
@@ -1170,6 +1258,7 @@ async function send() {
   renderAttachments();
   autosize();
   closeSlash();
+  let bubble = null;
   try {
     if (!state.liveId || state.exited) await startLive();
     if (state.title === "New chat" && text) setTitle(text.slice(0, 60));
@@ -1178,13 +1267,22 @@ async function send() {
     const runMode = state.runMode;
     const body = { content, mode: runMode };
     if (runMode === "parallel") body.strategy = state.strategy;
+    if (runMode === "ultra") {
+      Object.assign(body, { verify: state.ultraVerify, max_parallel: state.ultraParallel });
+      // Show the request now: an orchestrated run never echoes it (a direct one does; skip that echo).
+      bubble = renderUser({ content });
+      state.pendingEcho = text;
+    }
     const res = await api(`/chat/api/live/${state.liveId}/messages`, { method: "POST", body });
     if (runMode !== "normal") {
       // Older servers answer {ok: true} without task_id and run the message as a plain chat turn.
       if (!("task_id" in res)) status(`This server does not support ${RUN_MODES[runMode].label} mode yet; sent as a normal message.`, true);
       else if (res.task_id && !view.tasks.has(String(res.task_id))) handleTaskEvent({ type: "fcc_task", task_id: res.task_id, mode: runMode, status: "RECEIVED" });
+      if (runMode === "ultra" && res.task_id) ensureTask(String(res.task_id)).requestShown = true;
     }
   } catch (err) {
+    bubble?.remove();
+    state.pendingEcho = null;
     state.busy = false;
     renderControls();
     status(err.message, true);
@@ -1192,8 +1290,15 @@ async function send() {
   }
 }
 
+// The running Ultra task of this chat, if any: Stop cancels it (sub-agents included).
+function activeUltra() {
+  return [...view.tasks.values()].find((t) => t.mode === "ultra" && !TERMINAL_TASK.has(t.status) && !t.ultra?.endedAt);
+}
+
 async function interrupt() {
   if (!state.liveId) return;
+  const ultra = activeUltra();
+  if (ultra) return cancelTask(ultra);
   state.interrupted = true;
   try {
     await api(`/chat/api/live/${state.liveId}/control`, { method: "POST", body: { request: { subtype: "interrupt" } } });
@@ -1231,9 +1336,12 @@ function renderControls() {
   sendBtn.classList.toggle("stop", state.busy);
   sendBtn.title = state.busy ? "Stop (Esc)" : "Send (Enter)";
   $("folderLabel").textContent = state.cwd || state.home || "~";
+  if (state.runMode !== "normal" && project.cwd !== (state.cwd || state.home)) checkProject();
+  renderProjectWarning();
   $("folderChip").title = state.cwd;
   store.set("fcc.cwd", state.cwd);
-  store.set("fcc.mode", state.mode === "bypassPermissions" ? "default" : state.mode);
+  // Remember only your own picks, not a preset's mode.
+  if (!state.session.preset_permission_mode) store.set("fcc.mode", state.mode === "bypassPermissions" ? "default" : state.mode);
 }
 
 // Claude reports the resolved upstream id (e.g. "nvidia_nim/x/y") while menus list gateway aliases.
@@ -1244,11 +1352,16 @@ const defaultModel = () => state.models.find((m) => m.default) || null;
 const currentModel = () => findModel(state.model) || (isServerDefault(state.model) ? defaultModel() : null);
 
 function applyModeLocally(mode) {
-  state.mode = mode;
+  // The server clamps plan-approval mode switches to the preset's mode; mirror that.
+  state.mode = modeAllowed(mode) ? mode : state.session.preset_permission_mode;
   renderControls();
 }
 
 async function setMode(mode) {
+  if (!modeAllowed(mode)) {
+    status(`The ${state.session.policy_preset} policy allows ${MODES.find((m) => m.value === state.session.preset_permission_mode)?.label || state.session.preset_permission_mode} or stricter.`, true);
+    return;
+  }
   applyModeLocally(mode);
   if (!state.liveId || state.exited) return;
   try {
@@ -1289,7 +1402,8 @@ function renderModeMenu() {
   for (const mode of MODES) {
     const item = el("button", `menu-item${mode.value === state.mode ? " selected" : ""}`, mode.label);
     item.type = "button";
-    item.append(el("small", "", mode.hint));
+    item.disabled = !modeAllowed(mode.value);
+    item.append(el("small", "", item.disabled ? `Not allowed by the ${state.session.policy_preset} policy` : mode.hint));
     item.onclick = () => { togglePopover("modeMenu", false); setMode(mode.value); };
     menu.append(item);
   }
@@ -1598,6 +1712,7 @@ $("folderDialog").addEventListener("close", async () => {
 /* ------------------------------------------------ run modes & settings */
 
 const RUN_MODES = {
+  ultra: { label: "Ultra", hint: "A lead agent answers directly or splits the work across parallel sub-agents", placeholder: "Ask anything. Bigger tasks are split across parallel sub-agents…" },
   normal: { label: "Chat", hint: "Plain conversation with Claude Code", placeholder: "Ask Claude to build, fix, or explain…" },
   verified: { label: "Verified", hint: "Intent contract, verification gate, auto-recovery", placeholder: "Describe the change. Claude checks it against real evidence before calling it done…" },
   parallel: { label: "Parallel", hint: "Split into a task graph of parallel sessions, then verify", placeholder: "Describe a larger change to split across parallel sessions…" },
@@ -1611,7 +1726,7 @@ const cap = (s) => (s ? `${s[0].toUpperCase()}${s.slice(1)}` : "");
 function renderRunMode() {
   const btn = $("runModeBtn");
   const mode = RUN_MODES[state.runMode];
-  btn.textContent = state.runMode === "parallel" ? `${mode.label} · ${cap(state.strategy)}` : mode.label;
+  btn.textContent = state.runMode === "parallel" ? `${mode.label} · ${cap(state.strategy)}` : state.runMode === "ultra" && state.ultraVerify ? `${mode.label} · Verified` : mode.label;
   btn.className = `chip run-${state.runMode}`;
   btn.title = `Run mode: ${mode.label} — ${mode.hint}`;
   input.placeholder = mode.placeholder;
@@ -1622,6 +1737,47 @@ function setRunMode(value) {
   store.set("fcc.runMode", value);
   renderRunMode();
   scheduleVerify();
+  checkProject();
+}
+
+// Verified needs git to checkpoint/revert/scope-check; Parallel also needs a clean tree.
+const project = { cwd: null, info: null };
+
+async function checkProject(force) {
+  const cwd = state.cwd || state.home;
+  // Ultra works in any folder (git or not, clean or dirty): no preflight.
+  if (state.runMode === "normal" || state.runMode === "ultra" || !cwd) return renderProjectWarning();
+  if (force || project.cwd !== cwd) {
+    project.cwd = cwd;
+    project.info = null;
+    try {
+      const res = await fetch(`/chat/api/project?cwd=${encodeURIComponent(cwd)}`);
+      if (res.ok && project.cwd === cwd) project.info = await res.json();
+    } catch { /* older server: no preflight */ }
+  }
+  renderProjectWarning();
+}
+
+function projectBlocker() {
+  const info = project.info;
+  if (!info || state.runMode === "normal" || state.runMode === "ultra") return null;
+  if (!info.git) {
+    return state.runMode === "parallel"
+      ? { block: true, text: "Parallel mode needs a git repository: this folder is not one." }
+      : { block: false, text: "Not a git repository: changes can't be checkpointed, reverted or scope-checked, so the result will be Needs review at best." };
+  }
+  if (state.runMode === "parallel" && info.dirty) return { block: true, text: "Parallel mode needs a clean git tree: commit or stash your changes (untracked files count) first." };
+  if (state.runMode === "parallel" && !info.branch) return { block: true, text: "Parallel mode needs a checked-out branch (HEAD is detached)." };
+  return null;
+}
+
+function renderProjectWarning() {
+  const box = $("projectWarning");
+  const problem = projectBlocker();
+  box.hidden = !problem;
+  box.className = `banner tone-${problem?.block ? "bad" : "warn"}`;
+  box.textContent = problem ? problem.text : "";
+  $("sendBtn").disabled = !!problem?.block && !state.busy;
 }
 
 function menuRadio(label, hint, checked, onPick) {
@@ -1692,7 +1848,7 @@ function budgetBody() {
   const out = {};
   for (const [key] of BUDGET_FIELDS) {
     const v = Number(state.budget[key]);
-    out[key] = Number.isFinite(v) && v > 0 ? Math.floor(v) : null;
+    out[key] = Number.isFinite(v) && v > 0 ? (key === "max_minutes" ? v : Math.max(1, Math.floor(v))) : null;
   }
   return Object.values(out).some((v) => v !== null) ? out : null;
 }
@@ -1709,6 +1865,8 @@ function budgetText(budget) {
 function renderSettings() {
   $("policySelect").value = state.policy;
   for (const [key, id] of BUDGET_FIELDS) if (document.activeElement !== $(id)) $(id).value = state.budget[key] ?? "";
+  if (document.activeElement !== $("ultraParallel")) $("ultraParallel").value = String(state.ultraParallel);
+  $("ultraVerify").checked = state.ultraVerify;
   const rules = $("policyRules");
   rules.replaceChildren();
   const preset = presets.list.find((p) => p.id === state.policy);
@@ -1841,9 +1999,11 @@ function markInjection(toolId, signals) {
 
 const TASK_EVENTS = new Set([
   "fcc_task", "fcc_intent", "fcc_checkpoint", "fcc_verification_started", "fcc_verification_check",
-  "fcc_verification", "fcc_recovery", "fcc_orchestration",
+  "fcc_verification", "fcc_recovery", "fcc_orchestration", "fcc_ultra",
 ]);
-const TERMINAL_TASK = new Set(["VERIFIED", "CANCELLED", "FAILED"]);
+const TERMINAL_TASK = new Set(["VERIFIED", "CANCELLED", "FAILED", "COMPLETED"]);
+const TASK_KINDS = { verified: "Verified", parallel: "Parallel", ultra: "Ultra" };
+const taskKind = (task) => `${TASK_KINDS[task.mode] || "Verified"} task`;
 const PRE_LOCK = new Set(["RECEIVED", "INTENT_COMPILED", "BLOCKED_FOR_CLARIFICATION"]);
 const DISPOSITIONS = {
   VERIFIED: ["ok", "Verified", "Every required check passed and each requirement has evidence."],
@@ -1885,7 +2045,8 @@ function handleTaskEvent(ev) {
   const task = ensureTask(String(ev.task_id));
   switch (ev.type) {
     case "fcc_task":
-      if (ev.mode) task.mode = ev.mode;
+      // An Ultra run answered directly with Verified on reports as "verified": still Ultra.
+      if (ev.mode && task.mode !== "ultra") task.mode = ev.mode;
       if (ev.status && (ev.status !== task.status || (ev.reason && ev.reason !== task.reason))) {
         task.status = ev.status;
         task.reason = ev.reason || "";
@@ -1935,13 +2096,189 @@ function handleTaskEvent(ev) {
       break;
     }
     case "fcc_orchestration":
-      applyOrchestration(task, ev.event || {});
+      applyOrchestration(task, ev.event || {}, ev.ts);
+      break;
+    case "fcc_ultra":
+      applyUltra(task, ev);
       break;
     default:
       break;
   }
   renderTaskCard(task, !state.skipReplay);
   scheduleVerify();
+}
+
+/* ------------------------------------------------------------ ultra mode */
+
+const ULTRA_PHASES = {
+  analyzing: "Analyzing", direct: "Answering directly", planned: "Plan ready", dispatching: "Sub-agents working",
+  integrating: "Integrating", summarizing: "Summarizing", verifying: "Verifying", done: "Done", failed: "Failed", cancelled: "Cancelled",
+};
+const ULTRA_ENDED = new Set(["done", "failed", "cancelled"]);
+// Main-agent steps shown in the lead lane, in order.
+const ULTRA_STEPS = [["analyzing", "Analyze"], ["planned", "Plan"], ["dispatching", "Dispatch"], ["integrating", "Integrate"], ["summarizing", "Summarize"]];
+const epochMs = (ts) => (Number(ts) > 0 ? Number(ts) * 1000 : Date.now());
+
+function applyUltra(task, ev) {
+  task.mode = "ultra";
+  const u = task.ultra || (task.ultra = { phase: "analyzing", seen: new Set(), startedAt: epochMs(ev.ts), endedAt: null });
+  const at = epochMs(ev.ts);
+  const phase = ev.phase || u.phase;
+  u.phase = phase;
+  u.seen.add(phase);
+  for (const key of ["route", "reason", "request", "degraded", "analysis_ms", "max_parallel", "effective_parallel", "parallel_limited_by", "workspace", "error", "status"]) {
+    if (ev[key] !== undefined) u[key] = ev[key];
+  }
+  if (phase === "direct") {
+    timeline(task, `Lead agent: answering directly${u.reason ? ` (${u.reason})` : ""}`);
+  } else if (phase === "planned") {
+    u.dispatchAt = at + (Number(ev.dispatch_in_s) || 0) * 1000;
+    state.pendingEcho = null; // orchestrated: the request is never echoed
+    applyOrchestration(task, { type: "plan_ready", graph: ev.plan }, ev.ts);
+    timeline(task, `Lead agent planned ${task.orch.nodes.size} sub-task${task.orch.nodes.size === 1 ? "" : "s"}${u.reason ? ` (${u.reason})` : ""}`);
+  } else if (ULTRA_ENDED.has(phase)) {
+    u.endedAt = at;
+    timeline(task, `Ultra ${ULTRA_PHASES[phase].toLowerCase()}${ev.error ? `: ${ev.error}` : ""}`, phase === "done" ? "ok" : phase === "failed" ? "bad" : "");
+    // Nothing else will clear the composer's busy state for an orchestrated run.
+    state.busy = false;
+    setWorking(false);
+    renderControls();
+  }
+  ultraTick();
+}
+
+// One ticker re-renders running Ultra cards (elapsed times, the dispatch countdown).
+let ultraTimer = 0;
+function ultraTick() {
+  const running = [...view.tasks.values()].filter((t) => t.ultra && !t.ultra.endedAt);
+  if (running.length && !ultraTimer) ultraTimer = setInterval(ultraTick, 1000);
+  if (!running.length && ultraTimer) {
+    clearInterval(ultraTimer);
+    ultraTimer = 0;
+  }
+  for (const task of running) renderTaskCard(task, false);
+}
+
+function secondsText(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+function renderUltraCard(task) {
+  const { root, head, line } = task.card;
+  const u = task.ultra || { phase: "analyzing", seen: new Set(), startedAt: Date.now() };
+  const ended = !!u.endedAt || TERMINAL_TASK.has(task.status);
+  const tone = ended ? taskTone(task) : "run";
+  root.dataset.tone = tone;
+  root.classList.add("ultra-card");
+  const remembered = new Map([...root.querySelectorAll("details[data-key]")].map((d) => [d.dataset.key, d.open]));
+  const icon = el("span", "task-icon spark small");
+  icon.setAttribute("aria-hidden", "true");
+  const label = ended && task.status ? taskLabel(task) : ULTRA_PHASES[u.phase] || pretty(u.phase);
+  head.replaceChildren(icon, el("span", "task-kind", "Ultra"), pill(tone, label));
+  head.append(el("span", "ultra-elapsed", secondsText((u.endedAt || Date.now()) - u.startedAt)));
+  if (!ended) {
+    const stop = el("button", "btn small danger ultra-stop", "Stop");
+    stop.type = "button";
+    stop.title = "Stop the lead agent and every sub-agent";
+    stop.onclick = () => cancelTask(task, stop);
+    head.append(stop);
+  }
+  const open = el("button", "btn small task-open", "Details");
+  open.type = "button";
+  open.setAttribute("aria-label", "Open this task in the Verification panel");
+  open.onclick = () => revealTask(task.id);
+  head.append(open);
+
+  // Lead lane: the main agent's steps.
+  const lead = el("div", "lane lead");
+  const leadHead = el("div", "lane-head");
+  leadHead.append(el("span", "lane-name", "Main agent"));
+  if (u.analysis_ms != null) leadHead.append(el("span", "lane-meta", `analysis ${(Number(u.analysis_ms) / 1000).toFixed(1)}s`));
+  lead.append(leadHead);
+  const steps = el("ol", "ultra-steps");
+  const direct = u.route === "direct" || u.seen.has("direct");
+  const list = direct ? [["analyzing", "Analyze"], ["direct", "Answer"]] : [...ULTRA_STEPS, ...(u.seen.has("verifying") ? [["verifying", "Verify"]] : [])];
+  const current = list.findIndex(([p]) => p === u.phase);
+  list.forEach(([p, text], i) => {
+    const done = ended ? u.seen.has(p) : current >= 0 ? i < current : u.seen.has(p);
+    const li = el("li", done ? "done" : p === u.phase && !ended ? "current" : "", text);
+    if (p === u.phase && !ended) li.setAttribute("aria-current", "step");
+    steps.append(li);
+  });
+  lead.append(steps);
+  if (u.reason) lead.append(el("div", "lane-meta", u.reason));
+  if (u.error) lead.append(el("div", "gnode-err", u.error));
+  const lowMemory = u.parallel_limited_by === "memory" && u.effective_parallel;
+  if (u.phase === "planned" && !ended) {
+    const n = task.orch?.nodes.size || 0;
+    const left = Math.ceil(((u.dispatchAt || 0) - Date.now()) / 1000);
+    const pace = lowMemory ? ` (running ${u.effective_parallel} at a time (low memory))` : u.max_parallel ? ` (${u.max_parallel} at once)` : "";
+    lead.append(el("div", "ultra-countdown", `Starting ${n} sub-agent${n === 1 ? "" : "s"}${pace}${left > 0 ? ` in ${left}s` : "…"}`));
+  } else if (lowMemory && !direct && !ended) {
+    lead.append(el("div", "lane-meta ultra-memory", `running ${u.effective_parallel} at a time (low memory)`));
+  }
+  const body = [lead];
+
+  const lanes = el("div", "ultra-lanes");
+  for (const n of task.orch?.nodes.values() || []) lanes.append(ultraLane(task, n, remembered));
+  if (lanes.children.length) body.push(lanes);
+  const integration = task.orch?.integration;
+  if (integration) {
+    const conflicts = Object.entries(integration.conflicts || {});
+    const text = integration.status === "failed"
+      ? `Integration failed: ${integration.error || ""}`
+      : conflicts.length
+        ? `Conflicts (not applied): ${conflicts.map(([id, files]) => `${id}: ${[].concat(files).join(", ")}`).join("; ")}`
+        : `Applied: ${(integration.merged || []).join(", ") || "nothing to apply"}`;
+    body.push(el("div", `lane-meta ultra-integration${conflicts.length || integration.status === "failed" ? " warn" : ""}`, text));
+  }
+  if (task.orch?.ignored?.length) body.push(el("div", "lane-meta ultra-ignored", `Ignored tool-state files: ${task.orch.ignored.join(", ")}`));
+  line.replaceChildren(...body);
+  line.hidden = false;
+}
+
+function ultraLane(task, n, remembered) {
+  const waiting = n.status === "running" && n.waiting?.size ? n.waiting : null;
+  const lane = el("div", `lane gnode st-${n.status}${waiting ? " waiting" : ""}`);
+  const head = el("div", "lane-head");
+  head.append(el("span", "gnode-id", n.id));
+  if (n.role) head.append(el("span", "tag", n.role));
+  const took = n.elapsed_s != null ? Number(n.elapsed_s) * 1000 : n.startedAt ? (n.endedAt || Date.now()) - n.startedAt : null;
+  if (took != null) head.append(el("span", "lane-meta", secondsText(took)));
+  head.append(waiting ? pill("warn", "Waiting for approval") : pill(NODE_TONES[n.status] || "muted", pretty(n.status)));
+  lane.append(head);
+  if (n.objective) lane.append(el("p", "gnode-obj", n.objective));
+  if (n.instructions) {
+    const details = keyed(el("details", "lane-brief"), `ub:${task.id}:${n.id}`, false, remembered);
+    details.append(el("summary", "", "Instructions"), el("div", "gnode-sum-body", n.instructions));
+    lane.append(details);
+  }
+  const scope = Array.isArray(n.write_scope) ? n.write_scope : [];
+  lane.append(el("div", "gnode-meta", scope.length ? `Writes: ${scope.join(", ")}` : "Read-only"));
+  if (waiting) {
+    const row = el("div", "gnode-meta warn", `Needs your approval: ${[...new Set(waiting.values())].map(prettyToolName).join(", ")} `);
+    const review = el("button", "btn small", "Review");
+    review.type = "button";
+    review.onclick = () => view.prompts.get(waiting.keys().next().value)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    row.append(review);
+    lane.append(row);
+  }
+  if (n.status === "running" && n.activity?.length) {
+    const ul = el("ul", "lane-activity");
+    for (const a of n.activity.slice(-3)) ul.append(el("li", "", a));
+    lane.append(ul);
+  }
+  if (n.error) lane.append(el("div", "gnode-err", n.error));
+  if (n.changed_files?.length) lane.append(el("div", "gnode-meta", `Changed: ${n.changed_files.join(", ")}`));
+  if (n.reverted_out_of_scope?.length) lane.append(el("div", "gnode-meta warn", `Reverted out of scope: ${n.reverted_out_of_scope.join(", ")}`));
+  if (n.out_of_scope?.length) lane.append(el("div", "gnode-meta warn", `Changed outside its scope: ${n.out_of_scope.join(", ")}`));
+  if (n.summary) {
+    const details = keyed(el("details", "gnode-sum"), `us:${task.id}:${n.id}`, false, remembered);
+    details.append(el("summary", "", `Summary${n.turns ? ` · ${n.turns} turns` : ""}`), el("div", "gnode-sum-body", n.summary));
+    lane.append(details);
+  }
+  return lane;
 }
 
 function applyEvidence(task, attemptNo, disposition, evidence) {
@@ -1957,8 +2294,9 @@ function applyEvidence(task, attemptNo, disposition, evidence) {
   if (!task.intent && e.contract) task.intent = { status: "ready_to_lock", contract: e.contract, questions: [], warnings: [] };
 }
 
-function applyOrchestration(task, ev) {
-  task.mode = "parallel";
+function applyOrchestration(task, ev, ts) {
+  if (task.mode !== "ultra") task.mode = "parallel";
+  const at = epochMs(ts);
   const o = task.orch || (task.orch = { status: "planning", nodes: new Map(), integration: null, integrating: false, error: "" });
   const node = (id) => {
     const key = String(id);
@@ -1968,28 +2306,42 @@ function applyOrchestration(task, ev) {
   const setGraph = (graph) => {
     for (const n of Array.isArray(graph?.nodes) ? graph.nodes : []) if (n?.id != null) Object.assign(node(n.id), n);
   };
+  const list = (v) => (Array.isArray(v) ? v.map(String) : []);
   switch (ev.type) {
+    case "plan_ready": // Ultra: the lead agent's plan, shown before dispatch
+      setGraph(ev.graph);
+      o.status = "planned";
+      break;
     case "orchestration_started":
       o.status = "running";
       setGraph(ev.graph);
       timeline(task, `Task graph started: ${o.nodes.size} node${o.nodes.size === 1 ? "" : "s"}`);
       break;
     case "node_started":
-      Object.assign(node(ev.node_id), { status: "running", ...(ev.role ? { role: ev.role } : {}), ...(ev.branch ? { branch: ev.branch } : {}) });
+      Object.assign(node(ev.node_id), { status: "running", startedAt: at, ...(ev.role ? { role: ev.role } : {}), ...(ev.branch ? { branch: ev.branch } : {}) });
       timeline(task, `Node ${ev.node_id} started`);
+      break;
+    case "node_retry": // its Claude Code process crashed: one fresh session
+      Object.assign(node(ev.node_id), { status: "running", attempt: ev.attempt, activity: [] });
+      timeline(task, `Node ${ev.node_id} crashed${ev.error ? ` (${ev.error})` : ""}; retrying in a fresh session${list(ev.partial_files).length ? `, partial files left: ${list(ev.partial_files).join(", ")}` : ""}`, "warn");
       break;
     case "node_progress":
       if (Array.isArray(ev.tools)) node(ev.node_id).tools = ev.tools.map(String);
+      if (Array.isArray(ev.activity)) {
+        const n = node(ev.node_id);
+        n.activity = [...(n.activity || []), ...list(ev.activity)].slice(-10);
+      }
       break;
     case "node_completed":
       Object.assign(node(ev.node_id), {
-        status: "completed", summary: ev.summary || "", turns: ev.turns, cost_usd: ev.cost_usd,
-        reverted_out_of_scope: Array.isArray(ev.reverted_out_of_scope) ? ev.reverted_out_of_scope : [],
+        status: "completed", summary: ev.summary || "", turns: ev.turns, cost_usd: ev.cost_usd, endedAt: at,
+        reverted_out_of_scope: list(ev.reverted_out_of_scope), changed_files: list(ev.changed_files),
+        out_of_scope: list(ev.out_of_scope), ...(ev.elapsed_s != null ? { elapsed_s: ev.elapsed_s } : {}),
       });
       timeline(task, `Node ${ev.node_id} completed`, "ok");
       break;
     case "node_failed":
-      Object.assign(node(ev.node_id), { status: "failed", error: ev.error || "" });
+      Object.assign(node(ev.node_id), { status: "failed", error: ev.error || "", endedAt: at });
       timeline(task, `Node ${ev.node_id} failed${ev.error ? `: ${ev.error}` : ""}`, "bad");
       break;
     case "node_blocked":
@@ -1997,7 +2349,7 @@ function applyOrchestration(task, ev) {
       timeline(task, `Node ${ev.node_id} blocked by a failed dependency`, "warn");
       break;
     case "node_cancelled":
-      node(ev.node_id).status = "cancelled";
+      Object.assign(node(ev.node_id), { status: "cancelled", endedAt: at });
       break;
     case "integration_started":
       o.integrating = true;
@@ -2016,6 +2368,7 @@ function applyOrchestration(task, ev) {
     case "orchestration_completed":
       setGraph(ev.graph);
       if (ev.integration) o.integration = ev.integration;
+      o.ignored = list(ev.ignored_files);
       o.status = ev.status || "completed";
       timeline(task, `Task graph finished: ${pretty(o.status).toLowerCase()}`, o.status === "needs_attention" ? "warn" : "");
       break;
@@ -2036,7 +2389,7 @@ function applyOrchestration(task, ev) {
 
 function taskTone(task) {
   const s = task.status;
-  if (s === "VERIFIED") return "ok";
+  if (s === "VERIFIED" || s === "COMPLETED") return "ok";
   if (s === "FAILED_VERIFICATION" || s === "FAILED") return "bad";
   if (s === "RECOVERY_REQUIRED" || s === "BLOCKED_FOR_CLARIFICATION") return "warn";
   if (s === "CANCELLED") return "muted";
@@ -2045,15 +2398,16 @@ function taskTone(task) {
 }
 
 function taskLabel(task) {
+  if (task.status === "RECOVERY_REQUIRED") return "Needs your attention";
   return !task.status && task.disposition ? DISPOSITIONS[task.disposition]?.[1] || pretty(task.disposition) : pretty(task.status);
 }
 
 function shortTaskLabel(task) {
   const tone = taskTone(task);
-  if (tone === "ok") return "Verified";
+  if (tone === "ok") return task.status === "COMPLETED" ? "Done" : "Verified";
   if (tone === "bad") return "Failed";
   if (tone === "muted") return "Cancelled";
-  if (tone === "warn") return task.status === "BLOCKED_FOR_CLARIFICATION" ? "Input needed" : "Review";
+  if (tone === "warn") return task.status === "BLOCKED_FOR_CLARIFICATION" ? "Input needed" : "Needs your attention";
   return "Running";
 }
 
@@ -2092,6 +2446,12 @@ function renderTaskCard(task, create) {
     view.turn = null;
     append(root);
   }
+  if (task.mode === "ultra") {
+    renderUltraCard(task);
+    renderCardContract(task);
+    renderClarify(task);
+    return;
+  }
   const { root, head, line } = task.card;
   const tone = taskTone(task);
   root.dataset.tone = tone;
@@ -2101,7 +2461,7 @@ function renderTaskCard(task, create) {
   open.type = "button";
   open.setAttribute("aria-label", "Open this task in the Verification panel");
   open.onclick = () => revealTask(task.id);
-  head.replaceChildren(icon, el("span", "task-kind", `${task.mode === "parallel" ? "Parallel" : "Verified"} task`), pill(tone, taskLabel(task)), open);
+  head.replaceChildren(icon, el("span", "task-kind", taskKind(task)), pill(tone, taskLabel(task)), open);
   line.textContent = taskLine(task);
   line.hidden = !line.textContent;
   renderCardContract(task);
@@ -2283,7 +2643,7 @@ function renderVerify() {
   const tasks = [...view.tasks.values()].reverse();
   const latest = tasks[0];
   const btn = $("verifyBtn");
-  btn.hidden = !tasks.length && state.runMode === "normal";
+  btn.hidden = !tasks.length && (state.runMode === "normal" || state.runMode === "ultra");
   $("verifyBadge").hidden = !latest;
   if (latest) {
     $("verifyBadge").dataset.tone = taskTone(latest);
@@ -2308,7 +2668,7 @@ function renderVerify() {
 function taskSection(task, isLatest, remembered) {
   const section = keyed(el("details", "vtask"), `t:${task.id}`, isLatest, remembered);
   const summary = el("summary", "vtask-sum");
-  summary.append(el("span", "vtask-title", `${task.mode === "parallel" ? "Parallel" : "Verified"} task`), el("span", "vtask-id", shortSha(task.id)), pill(taskTone(task), taskLabel(task)));
+  summary.append(el("span", "vtask-title", taskKind(task)), el("span", "vtask-id", shortSha(task.id)), pill(taskTone(task), taskLabel(task)));
   const body = el("div", "vtask-body");
   const goal = task.intent?.contract?.goal;
   if (goal) body.append(el("p", "vtask-goal", String(goal)));
@@ -2374,6 +2734,14 @@ function taskActions(task) {
   revert.title = task.checkpoint?.supported === false ? "No checkpoint: this folder is not a git repository" : "Restore the files this task changed to its checkpoint";
   revert.onclick = () => revertTask(task);
   row.append(exportBtn, revert);
+  if (task.status === "RECOVERY_REQUIRED") {
+    const retry = el("button", "btn small primary", "Try again");
+    retry.type = "button";
+    retry.title = "Re-run verification, and if it still fails give Claude one more recovery attempt";
+    retry.disabled = !!task.resuming || state.busy;
+    retry.onclick = () => resumeTask(task);
+    row.prepend(retry);
+  }
   if (!TERMINAL_TASK.has(task.status)) {
     const cancel = el("button", "btn small", "Cancel task");
     cancel.type = "button";
@@ -2399,13 +2767,28 @@ async function revertTask(task) {
   scheduleVerify();
 }
 
+async function resumeTask(task) {
+  task.resuming = true;
+  scheduleVerify();
+  try {
+    if (!state.liveId || state.exited) await startLive();
+    await api(`/chat/api/tasks/${encodeURIComponent(task.id)}/resume`, { method: "POST", body: { live_id: state.liveId } });
+    timeline(task, "Trying again: one more verification and recovery attempt");
+    status("Trying again…");
+  } catch (err) {
+    status(`Try again failed: ${err.message}`, true);
+  }
+  task.resuming = false;
+  scheduleVerify();
+}
+
 async function cancelTask(task, button) {
-  button.disabled = true;
+  if (button) button.disabled = true;
   try {
     await api(`/chat/api/tasks/${encodeURIComponent(task.id)}/cancel`, { method: "POST" });
     status("Cancelling task…");
   } catch (err) {
-    button.disabled = false;
+    if (button) button.disabled = false;
     status(`Cancel failed: ${err.message}`, true);
   }
 }
@@ -2535,12 +2918,20 @@ function graphNode(task, remembered) {
 }
 
 function graphCard(task, n, remembered) {
-  const card = el("div", `gnode st-${n.status}`);
+  const waiting = n.status === "running" && n.waiting?.size ? n.waiting : null;
+  const card = el("div", `gnode st-${n.status}${waiting ? " waiting" : ""}`);
   const head = el("div", "gnode-head");
   head.append(el("span", "gnode-id", n.id));
   if (n.role) head.append(el("span", "tag", n.role));
-  head.append(pill(NODE_TONES[n.status] || "muted", pretty(n.status)));
+  head.append(waiting ? pill("warn", "Waiting for approval") : pill(NODE_TONES[n.status] || "muted", pretty(n.status)));
   card.append(head);
+  if (waiting) {
+    const row = el("div", "gnode-meta warn", `Needs your approval: ${[...new Set(waiting.values())].map(prettyToolName).join(", ")} `);
+    const review = el("button", "btn small", "Review");
+    review.onclick = () => view.prompts.get(waiting.keys().next().value)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    row.append(review);
+    card.append(row);
+  }
   if (n.objective) card.append(el("p", "gnode-obj", n.objective));
   const scope = Array.isArray(n.write_scope) ? n.write_scope : [];
   card.append(el("div", "gnode-meta", scope.length ? `Writes: ${scope.join(", ")}` : "Read-only"));
@@ -2581,7 +2972,7 @@ function integrationNode(o) {
 }
 
 function wireTasks() {
-  if (!RUN_MODES[state.runMode]) state.runMode = "normal";
+  if (!RUN_MODES[state.runMode]) state.runMode = "ultra";
   if (!STRATEGIES[state.strategy]) state.strategy = "balanced";
   renderRunMode();
   $("runModeBtn").onclick = () => {
@@ -2602,10 +2993,8 @@ function wireTasks() {
   $("policySelect").onchange = (e) => {
     state.policy = e.target.value;
     store.set("fcc.policy", state.policy);
+    // The preset (and its permission mode) applies when this chat's next session starts.
     settingsDirty = true;
-    // The preset's permission mode becomes the explicit mode we start with.
-    const mode = presets.list.find((p) => p.id === state.policy)?.permission_mode;
-    if (mode && MODES.some((m) => m.value === mode)) setMode(mode);
     renderSettings();
   };
   for (const [key, id] of BUDGET_FIELDS) {
@@ -2617,6 +3006,19 @@ function wireTasks() {
       settingsDirty = true;
     };
   }
+  // Ultra settings ride on each message, so they never restart the session.
+  $("ultraParallel").oninput = (e) => {
+    const v = Math.floor(Number(e.target.value));
+    if (!Number.isFinite(v) || v < 1) return;
+    state.ultraParallel = Math.min(6, v);
+    store.set("fcc.ultraParallel", String(state.ultraParallel));
+  };
+  $("ultraParallel").onblur = () => renderSettings();
+  $("ultraVerify").onchange = (e) => {
+    state.ultraVerify = e.target.checked;
+    store.set("fcc.ultraVerify", state.ultraVerify ? "1" : "0");
+    renderRunMode();
+  };
   $("verifyBtn").onclick = () => toggleVerify();
   $("closeVerify").onclick = () => toggleVerify(false);
   $("healthChip").onclick = () => window.open("/admin", "_blank", "noopener");
@@ -2675,8 +3077,8 @@ function wire() {
     }
     if (e.key === "Tab" && e.shiftKey) {
       e.preventDefault();
-      const idx = CYCLE_MODES.indexOf(state.mode);
-      setMode(CYCLE_MODES[(idx + 1) % CYCLE_MODES.length]);
+      const cycle = CYCLE_MODES.filter(modeAllowed);
+      if (cycle.length) setMode(cycle[(cycle.indexOf(state.mode) + 1) % cycle.length]);
       return;
     }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {

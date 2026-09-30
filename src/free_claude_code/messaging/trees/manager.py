@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Public facade for atomic messaging tree aggregates."""
 
 import asyncio

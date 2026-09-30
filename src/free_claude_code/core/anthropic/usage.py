@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Anthropic terminal usage accounting helpers."""
 
 

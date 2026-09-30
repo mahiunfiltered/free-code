@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """NVIDIA NIM provider implementation."""
 
 import json

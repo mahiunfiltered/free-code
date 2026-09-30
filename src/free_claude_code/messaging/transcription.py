@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Instance-owned local Whisper transcription."""
 
 import asyncio

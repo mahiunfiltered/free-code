@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """pystray adapter for the Windows tray and macOS menu bar."""
 
 from io import BytesIO

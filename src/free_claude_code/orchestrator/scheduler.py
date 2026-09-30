@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Dependency-aware DAG task scheduler with deadlock detection and bounded timeouts."""
 
 import asyncio
@@ -41,15 +39,26 @@ class TaskScheduler:
             # Enforce total plan timeout
             if time.time() - start_time > total_timeout_seconds:
                 for t in tasks:
-                    if t.status in (TaskState.CREATED, TaskState.QUEUED, TaskState.WAITING, TaskState.RUNNING):
+                    if t.status in (
+                        TaskState.CREATED,
+                        TaskState.QUEUED,
+                        TaskState.WAITING,
+                        TaskState.RUNNING,
+                    ):
                         t.status = TaskState.FAILED
-                        t.error = f"Overall plan exceeded timeout of {total_timeout_seconds}s"
+                        t.error = (
+                            f"Overall plan exceeded timeout of {total_timeout_seconds}s"
+                        )
                 break
 
             # Find tasks that are ready to run
             ready_tasks: list[Task] = []
             for t in tasks:
-                if t.task_id in active_futures or t.task_id in completed_task_ids or t.task_id in failed_task_ids:
+                if (
+                    t.task_id in active_futures
+                    or t.task_id in completed_task_ids
+                    or t.task_id in failed_task_ids
+                ):
                     continue
 
                 # Check dependencies
@@ -68,7 +77,7 @@ class TaskScheduler:
                         ready_tasks.append(t)
                     else:
                         t.status = TaskState.BLOCKED
-                        t.error = f"Prerequisite dependency failed"
+                        t.error = "Prerequisite dependency failed"
                         failed_task_ids.add(t.task_id)
                         if on_task_update:
                             on_task_update(t)
@@ -83,8 +92,10 @@ class TaskScheduler:
             # Deadlock detection: No active tasks and no ready tasks while uncompleted tasks remain
             if not active_futures:
                 remaining = [
-                    t for t in tasks
-                    if t.task_id not in completed_task_ids and t.task_id not in failed_task_ids
+                    t
+                    for t in tasks
+                    if t.task_id not in completed_task_ids
+                    and t.task_id not in failed_task_ids
                 ]
                 for rem_task in remaining:
                     rem_task.status = TaskState.BLOCKED

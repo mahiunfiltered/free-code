@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """One-time consolidation of legacy FCC dotenv state."""
 
 import os

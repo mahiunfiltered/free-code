@@ -1,12 +1,13 @@
 import os
 import subprocess
+import io
 import sys
 import time
 
 # Ensure UTF-8 output encoding for Windows consoles
-if hasattr(sys.stdout, "reconfigure"):
+if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding="utf-8")
-if hasattr(sys.stderr, "reconfigure"):
+if isinstance(sys.stderr, io.TextIOWrapper):
     sys.stderr.reconfigure(encoding="utf-8")
 
 def run_test(name, cmd_args, cwd="D:\\Claude code", timeout=120):

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Concrete OpenAI-compatible provider and per-request stream execution."""
 
 import asyncio
@@ -8,6 +6,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from typing import Any
 
 import httpx2
@@ -67,6 +66,8 @@ from free_claude_code.providers.http import (
     ProviderAttemptScope,
     close_provider_stream,
     maybe_await_aclose,
+    open_guarded_stream,
+    reuse_connection_after_sse_done,
 )
 from free_claude_code.providers.model_listing import (
     extract_openai_model_infos,
@@ -109,6 +110,11 @@ from .usage import (
 )
 
 OpenAIAsyncCredentialProvider = Callable[[], Awaitable[str]]
+# ponytail: httpx's 5 s idle expiry drops the pooled TLS connection between
+# requests (a key pool round-robins, so each key's client idles for longer),
+# costing a fresh TCP+TLS handshake (~50-150 ms) per request. NVIDIA NIM keeps
+# idle connections for over two minutes; stay below that.
+UPSTREAM_KEEPALIVE_EXPIRY_S = 90.0
 _ExtraReasoningEvents = Callable[[Any, ChatStreamOutput], Iterator[str]]
 _ChatOutputFactory = Callable[[], ChatStreamOutput]
 
@@ -510,12 +516,16 @@ class OpenAIChatProvider(BaseProvider):
             read=config.http_read_timeout,
             write=config.http_write_timeout,
         )
-        http_client = None
-        if config.proxy:
-            http_client = DefaultAsyncHttpx2Client(
-                proxy=config.proxy,
-                timeout=timeout,
-            )
+        http_client = DefaultAsyncHttpx2Client(
+            proxy=config.proxy or None,
+            timeout=timeout,
+            limits=httpx2.Limits(
+                max_connections=1000,
+                max_keepalive_connections=100,
+                keepalive_expiry=UPSTREAM_KEEPALIVE_EXPIRY_S,
+            ),
+            event_hooks={"response": [reuse_connection_after_sse_done]},
+        )
         self._client = AsyncOpenAI(
             api_key=api_key_provider or self._api_key,
             base_url=self._base_url,
@@ -768,9 +778,14 @@ class OpenAIChatProvider(BaseProvider):
             retain_attempt = False
             try:
                 create_body = self._prepare_create_body(body)
-                stream = await self._client.chat.completions.create(
-                    **create_body,
-                    stream=True,
+                stream = await open_guarded_stream(
+                    partial(
+                        self._client.chat.completions.create,
+                        **create_body,
+                        stream=True,
+                    ),
+                    first_byte_timeout_s=self._config.http_first_byte_timeout,
+                    idle_timeout_s=self._config.http_stream_idle_timeout,
                 )
                 stream = self._normalize_stream(stream, body)
                 retain_attempt = True

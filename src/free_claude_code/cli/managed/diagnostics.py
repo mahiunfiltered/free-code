@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Managed Claude Code diagnostic classification."""
 
 from dataclasses import dataclass

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Internal messaging tree package facade."""
 
 from .identity import TreeIdentity

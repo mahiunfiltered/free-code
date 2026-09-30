@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """ChatGPT subscription provider using OpenAI's Codex backend."""
 
 from .auth import OpenAIAccess, OpenAIAuthManager, OpenAIReconnectRequired

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Structured DEBUG traces for end-to-end request / CLI / provider logging.
 
 Emitted lines are merged into JSON log rows by ``config.logging_config``.
@@ -91,6 +89,7 @@ def extract_claude_session_id_from_headers(headers: Mapping[str, str]) -> str | 
     """Best-effort session id forwarded by Claude Code / SDK via HTTP."""
     lowered = {str(k).lower(): v for k, v in headers.items() if isinstance(v, str)}
     for key in (
+        "x-claude-code-session-id",
         "anthropic-session-id",
         "x-anthropic-session-id",
         "claude-session-id",

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Public OpenAI Responses protocol boundary."""
 
 from .chat_request import ResponsesChatRequest, build_responses_chat_request

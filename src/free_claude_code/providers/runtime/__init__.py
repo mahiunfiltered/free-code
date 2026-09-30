@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """App-scoped provider runtime facade."""
 
 from .config import build_provider_config

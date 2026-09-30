@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Translate upstream OpenAI Responses events into Anthropic Messages SSE."""
 
 from dataclasses import dataclass

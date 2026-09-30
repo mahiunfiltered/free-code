@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Portable Anthropic image-source normalization."""
 
 import base64

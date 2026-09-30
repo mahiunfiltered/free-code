@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Provider-prefixed model reference helpers."""
 
 from collections.abc import Iterable

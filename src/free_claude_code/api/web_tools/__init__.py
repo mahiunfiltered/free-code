@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Submodules for Anthropic web server tool handling (search/fetch, egress, streaming)."""
 
 from .egress import (

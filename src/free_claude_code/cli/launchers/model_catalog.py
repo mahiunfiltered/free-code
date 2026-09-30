@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared FCC model-catalog projection for installed client launchers."""
 
 import json

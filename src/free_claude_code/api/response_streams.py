@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """FastAPI streaming response wrappers for public API wire formats."""
 
 import asyncio

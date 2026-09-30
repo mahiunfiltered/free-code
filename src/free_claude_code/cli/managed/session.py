@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Managed Claude Code subprocess session."""
 
 import asyncio
@@ -152,13 +150,13 @@ class ManagedClaudeSession:
                         try:
                             process.stdin.write(invocation.prompt_input.encode("utf-8"))
                             await process.stdin.drain()
-                        except (BrokenPipeError, ConnectionResetError, OSError):
+                        except BrokenPipeError, ConnectionResetError, OSError:
                             pass
                         finally:
                             try:
                                 process.stdin.close()
                                 await process.stdin.wait_closed()
-                            except (BrokenPipeError, ConnectionResetError, OSError):
+                            except BrokenPipeError, ConnectionResetError, OSError:
                                 pass
 
                 if not process.stdout:

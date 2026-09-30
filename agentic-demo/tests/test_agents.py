@@ -56,7 +56,7 @@ async def test_reviewer():
     code = '''def main():\n    print("hi")\n\nif __name__ == "__main__":\n    main()'''
     msg = AgentMessage("user", "Reviewer", code)
     response = await agent.process(msg)
-    assert response.content["approved"] is True
+    assert (response.metadata or {})["approved"] is True
 
 
 @pytest.mark.asyncio

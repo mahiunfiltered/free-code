@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Lightweight entry points for installed Free Claude Code commands."""
 
 import sys

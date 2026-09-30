@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Provider-owned SDK classification and retry qualification."""
 
 import json
@@ -58,6 +56,24 @@ class RetryableProviderProtocolError(RuntimeError):
 
 class RetryableToolProtocolError(RetryableProviderProtocolError):
     """A malformed tool response whose continuation still requires tools."""
+
+
+class ProviderStreamStalled(TimeoutError):
+    """Upstream sent no stream chunk before the first-byte or idle deadline.
+
+    A ``TimeoutError`` so it classifies as the retryable ``FailureKind.TIMEOUT``
+    (key-pool failover, model fallbacks); its message names the elapsed guard.
+    """
+
+    @classmethod
+    def first_byte(cls, seconds: float) -> ProviderStreamStalled:
+        return cls(
+            f"Provider sent no response within {seconds:g}s (first-byte timeout)."
+        )
+
+    @classmethod
+    def idle(cls, seconds: float) -> ProviderStreamStalled:
+        return cls(f"Provider stream stalled: no chunk for {seconds:g}s.")
 
 
 def classify_provider_failure(
@@ -243,6 +259,8 @@ def provider_error_message(
         return "Could not connect to provider."
     if isinstance(exc, httpx.RemoteProtocolError):
         return "Provider connection was interrupted before a response was received."
+    if isinstance(exc, ProviderStreamStalled):
+        return str(exc)
     if isinstance(exc, TimeoutError):
         if read_timeout_s is not None:
             return f"Provider request timed out after {read_timeout_s:g}s."

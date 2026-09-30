@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """ASGI lifespan adapter for the application runtime owner."""
 
 from loguru import logger

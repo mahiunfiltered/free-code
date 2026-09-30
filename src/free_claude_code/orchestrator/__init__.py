@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Free Claude Code Parallel Task Orchestrator & Autonomous Agent Runtime."""
 
 from .conflict_manager import ConflictManager
@@ -16,15 +14,15 @@ from .ui import ProgressDashboard
 from .worker_pool import WorkerPool
 
 __all__ = [
-    "AutonomousMasterAgent",
-    "WorkflowResult",
-    "Task",
-    "TaskState",
     "AgentRole",
-    "ModelRole",
-    "DependencyKind",
-    "WorkerPool",
-    "TaskScheduler",
+    "AutonomousMasterAgent",
     "ConflictManager",
+    "DependencyKind",
+    "ModelRole",
     "ProgressDashboard",
+    "Task",
+    "TaskScheduler",
+    "TaskState",
+    "WorkerPool",
+    "WorkflowResult",
 ]

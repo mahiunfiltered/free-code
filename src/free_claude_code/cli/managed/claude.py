@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Managed Claude Code task command, environment, and stdout parsing."""
 
 import json

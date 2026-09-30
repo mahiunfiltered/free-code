@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Neutral provider catalog: IDs, credentials, defaults, proxy and capability metadata.
 
 Adapter factories live in :mod:`providers.runtime.factory`; this module stays free of

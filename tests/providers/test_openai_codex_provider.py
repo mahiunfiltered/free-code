@@ -636,10 +636,6 @@ async def test_early_truncated_attempt_is_retried_without_duplicate_output() -> 
                     "response.created",
                     {"type": "response.created", "response": {"id": "first"}},
                 ),
-                (
-                    "response.output_text.delta",
-                    {"type": "response.output_text.delta", "delta": "abandoned"},
-                ),
             )
         else:
             body = _complete_stream("kept")

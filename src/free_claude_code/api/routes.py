@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """FastAPI route handlers."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response

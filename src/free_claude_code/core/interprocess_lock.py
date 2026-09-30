@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Small cross-platform advisory file lock."""
 
 import os

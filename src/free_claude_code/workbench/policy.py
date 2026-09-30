@@ -182,11 +182,17 @@ def builtin_rules() -> list[Rule]:
     return rules
 
 
+def is_protected_branch(branch: str | None) -> bool:
+    """``main``, ``master`` and ``release/*``: never committed to directly by FCC."""
+
+    return branch is not None and (
+        branch in PROTECTED_BRANCHES or branch.startswith("release/")
+    )
+
+
 def _branch_rules(branch: str | None) -> list[Rule]:
     # ponytail: branch is sampled once at session start; a mid-session checkout is not tracked.
-    if branch is None or not (
-        branch in PROTECTED_BRANCHES or branch.startswith("release/")
-    ):
+    if not is_protected_branch(branch):
         return []
     rules: list[Rule] = []
     for verb in ("commit", "merge", "revert", "rebase"):

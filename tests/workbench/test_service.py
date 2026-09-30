@@ -140,6 +140,17 @@ async def test_observer_flags_injection_publishes_usage_and_audits_permissions(
         service.observe(
             session, {"type": "fcc_permission_resolved", "request_id": "r2"}
         )
+        # A node answer relayed to the chat was already audited on the node session.
+        service.observe(
+            session,
+            {
+                "type": "fcc_permission_resolved",
+                "request_id": "r3",
+                "behavior": "allow",
+                "node_id": "impl",
+                "live_id": "node",
+            },
+        )
         [record] = service.audit.recent(action="permission.decision")
         assert (record.resource, record.decision) == ("Bash", "deny")
         assert json.loads(record.payload_json)["request_id"] == "r1"
@@ -241,3 +252,40 @@ def test_config_apply_audit_records_keys_only(service: WorkbenchService):
     records = objs(service.audit_records(action="config.apply")["records"])
     assert [r["outcome"] for r in records] == ["rejected", "applied"]
     assert records[1]["payload"] == {"keys": ["MODEL", "NVIDIA_NIM_API_KEY"]}
+
+
+@pytest.mark.asyncio
+async def test_resume_needs_a_known_task_and_a_live_chat(service: WorkbenchService):
+    assert await service.resume("nope") is False
+    task_id = service.tasks.create("sess-1", "/repo")
+    with pytest.raises(InvalidRequestError, match="Open this task's chat"):
+        await service.resume(task_id)
+
+
+def test_project_status_for_plain_and_missing_folders(
+    service: WorkbenchService, tmp_path: Path
+):
+    assert service.project(str(tmp_path)) == {
+        "git": False,
+        "branch": None,
+        "dirty": False,
+    }
+    with pytest.raises(InvalidRequestError, match="does not exist"):
+        service.project(str(tmp_path / "missing"))
+
+
+def test_close_interrupted_fails_stuck_tasks_and_audits(service: WorkbenchService):
+    stuck = service.tasks.create("sess-1", "/repo")
+    service.tasks.transition(stuck, "INTENT_COMPILED")
+    service.tasks.transition(stuck, "BLOCKED_FOR_CLARIFICATION")
+
+    assert service.close_interrupted() == [stuck]
+
+    assert service.tasks.get(stuck).status == "FAILED"
+    [record] = objs(service.audit_records(action="task.interrupted")["records"])
+    assert record["resource"] == stuck and record["outcome"] == "FAILED"
+    assert record["payload"] == {
+        "from": "BLOCKED_FOR_CLARIFICATION",
+        "reason": "server restarted",
+    }
+    assert service.close_interrupted() == []

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Vertex AI service and OpenAI-compatible endpoint construction."""
 
 import re

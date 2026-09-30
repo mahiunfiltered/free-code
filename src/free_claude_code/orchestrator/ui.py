@@ -1,12 +1,10 @@
-from __future__ import annotations
-
 """Terminal progress dashboard for parallel agent execution."""
 
 import sys
 import time
-from typing import Sequence
+from collections.abc import Sequence
 
-from free_claude_code.orchestrator.models import AgentRole, Task, TaskState
+from free_claude_code.orchestrator.models import Task, TaskState
 
 
 class ProgressDashboard:
@@ -41,14 +39,14 @@ class ProgressDashboard:
     ) -> None:
         elapsed = time.time() - self.start_time
         lines: list[str] = []
-        lines.append(f"\n{'='*60}")
+        lines.append(f"\n{'=' * 60}")
         lines.append(f" {self.title}")
-        lines.append(f"{'='*60}")
+        lines.append(f"{'=' * 60}")
         lines.append(f" MASTER:  {master_state:<16}  Elapsed: {elapsed:.1f}s")
         lines.append(f" MODEL:   {model_name}")
-        lines.append(f"{'-'*60}")
+        lines.append(f"{'-' * 60}")
         lines.append(f" {'STATE':<10} {'ROLE':<12} {'TASK':<24} {'TIME':<8}")
-        lines.append(f"{'-'*60}")
+        lines.append(f"{'-' * 60}")
 
         for t in tasks:
             icon = self._state_icon(t.status)
@@ -57,5 +55,5 @@ class ProgressDashboard:
             dur_str = f"{t.duration_seconds:.1f}s"
             lines.append(f" {icon:<10} {role_str:<12} {name_str:<24} {dur_str:<8}")
 
-        lines.append(f"{'='*60}\n")
+        lines.append(f"{'=' * 60}\n")
         print("\n".join(lines), file=stream, flush=True)

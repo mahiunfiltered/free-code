@@ -82,6 +82,7 @@
             <summary><span class="todo-title">Tasks</span><span class="todo-progress" id="todoProgress"></span></summary>
             <div id="todoBody"></div>
           </details>
+          <div class="banner tone-warn" id="projectWarning" role="status" hidden></div>
           <div class="composer" id="composer">
             <div class="slash-menu" id="slashMenu" role="listbox" hidden></div>
             <div class="attachments" id="attachments"></div>
@@ -123,8 +124,15 @@
                       <span class="field-label" id="budgetLabel">Budgets <small>(max per session, blank = no limit)</small></span>
                       <div class="budget-grid">
                         <label class="field"><span>Turns</span><input id="budgetTurns" type="number" min="1" step="1" inputmode="numeric" placeholder="—" /></label>
-                        <label class="field"><span>Minutes</span><input id="budgetMinutes" type="number" min="1" step="1" inputmode="numeric" placeholder="—" /></label>
+                        <label class="field"><span>Minutes</span><input id="budgetMinutes" type="number" min="0.5" step="0.5" inputmode="decimal" placeholder="—" /></label>
                         <label class="field"><span>Output tokens</span><input id="budgetTokens" type="number" min="1" step="1000" inputmode="numeric" placeholder="—" /></label>
+                      </div>
+                    </div>
+                    <div class="field-group" role="group" aria-labelledby="ultraLabel">
+                      <span class="field-label" id="ultraLabel">Ultra mode <small>(applies to the next message)</small></span>
+                      <div class="budget-grid">
+                        <label class="field"><span>Sub-agents at once</span><input id="ultraParallel" type="number" min="1" max="6" step="1" inputmode="numeric" /></label>
+                        <label class="field check"><input id="ultraVerify" type="checkbox" /><span>Verify the result</span></label>
                       </div>
                     </div>
                     <p class="settings-current" id="settingsCurrent"></p>

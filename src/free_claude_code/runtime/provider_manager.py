@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Single-owner provider generations and application model catalog."""
 
 import asyncio

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared strict sliding-window rate limiting primitives."""
 
 import asyncio

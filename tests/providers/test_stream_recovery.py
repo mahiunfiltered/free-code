@@ -90,8 +90,10 @@ def test_statusless_transient_api_error_allows_early_retry() -> None:
 def test_committed_output_allows_midstream_recovery() -> None:
     controller = RecoveryController()
 
-    assert controller.push("event: content_block_delta\n\n") == []
-    assert controller.flush() == ["event: content_block_delta\n\n"]
+    assert controller.push("event: content_block_delta\n\n") == [
+        "event: content_block_delta\n\n"
+    ]
+    assert controller.committed
     decision = controller.advance_failure(
         retryable=True,
         stream_opened=True,
@@ -109,7 +111,7 @@ def test_committed_output_allows_midstream_recovery() -> None:
 def test_uncommitted_complete_tool_can_be_salvaged() -> None:
     controller = RecoveryController()
 
-    assert controller.push("event: content_block_delta\n\n") == []
+    assert controller.push("event: content_block_start\n\n") == []
     decision = controller.advance_failure(
         retryable=True,
         stream_opened=True,
@@ -121,7 +123,7 @@ def test_uncommitted_complete_tool_can_be_salvaged() -> None:
     assert decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY
     assert not decision.committed
     assert decision.has_buffered
-    assert controller.flush_uncommitted(decision) == ["event: content_block_delta\n\n"]
+    assert controller.flush_uncommitted(decision) == ["event: content_block_start\n\n"]
     assert controller.committed
     assert not controller.has_buffered
 
@@ -143,19 +145,32 @@ def test_holdback_buffers_until_delay_then_commits() -> None:
     now = [10.0]
     holdback = RecoveryHoldbackBuffer(holdback_seconds=0.75, now=lambda: now[0])
 
-    assert holdback.push("event: content_block_start\n\n") == []
+    assert holdback.push("event: message_start\n\n") == []
     now[0] += 0.74
-    assert holdback.push("event: content_block_delta\n\n") == []
+    assert holdback.push("event: content_block_start\n\n") == []
     assert not holdback.committed
 
     now[0] += 0.01
-    assert holdback.push("event: content_block_stop\n\n") == [
+    assert holdback.push("event: ping\n\n") == [
+        "event: message_start\n\n",
         "event: content_block_start\n\n",
-        "event: content_block_delta\n\n",
-        "event: content_block_stop\n\n",
+        "event: ping\n\n",
     ]
     assert holdback.committed
     assert holdback.push("event: message_stop\n\n") == ["event: message_stop\n\n"]
+
+
+def test_holdback_flushes_first_output_delta_immediately() -> None:
+    """Holding a delta would add the holdback window to time-to-first-token."""
+    for delta in (
+        'event: content_block_delta\ndata: {"type": "content_block_delta"}\n\n',
+        "event: response.output_text.delta\ndata: {}\n\n",
+        "event: response.reasoning_summary_text.delta\ndata: {}\n\n",
+    ):
+        holdback = RecoveryHoldbackBuffer(now=lambda: 1.0)
+        assert holdback.push("event: message_start\n\n") == []
+        assert holdback.push(delta) == ["event: message_start\n\n", delta]
+        assert holdback.committed
 
 
 def test_holdback_flushes_at_internal_buffer_cap() -> None:

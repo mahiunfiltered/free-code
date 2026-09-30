@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Groq chat-completions provider with per-model reasoning negotiation."""
 
 import json

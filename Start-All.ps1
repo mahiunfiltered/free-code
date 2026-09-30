@@ -62,8 +62,14 @@ if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
     exit 1
 }
 Write-Status "FCC server + Claude" "running - window opened" Green
+$port = 8082
+$envFile = Join-Path $env:USERPROFILE ".fcc\.env"
+if (Test-Path $envFile) {
+    $match = Select-String -Path $envFile -Pattern '^\s*PORT\s*=\s*["'']?(\d+)' | Select-Object -First 1
+    if ($match) { $port = [int]$match.Matches[0].Groups[1].Value }
+}
 Write-Host ""
-Write-Host "  Chat:  http://127.0.0.1:8082/chat" -ForegroundColor Gray
-Write-Host "  Admin: http://127.0.0.1:8082/admin" -ForegroundColor Gray
-Write-Host "  Stop:  run stop-fcc.ps1" -ForegroundColor Gray
+Write-Host "  Chat:  http://127.0.0.1:$port/chat" -ForegroundColor Gray
+Write-Host "  Admin: http://127.0.0.1:$port/admin" -ForegroundColor Gray
+Write-Host "  Stop:  double-click Stop-All.bat" -ForegroundColor Gray
 Start-Sleep -Seconds 4

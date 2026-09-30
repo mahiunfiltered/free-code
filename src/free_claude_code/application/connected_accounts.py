@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Safe application boundary for provider connected accounts."""
 
 from dataclasses import dataclass

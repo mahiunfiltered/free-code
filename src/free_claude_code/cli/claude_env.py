@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared Claude Code environment policy for FCC client surfaces."""
 
 from collections.abc import Mapping

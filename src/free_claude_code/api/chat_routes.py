@@ -71,12 +71,20 @@ class StartPayload(BaseModel):
 
 class MessagePayload(BaseModel):
     content: JsonValue
-    mode: Literal["normal", "verified", "parallel"] = "normal"
+    mode: Literal["normal", "verified", "parallel", "ultra"] = "normal"
     strategy: Literal["economy", "balanced", "fastest"] = "balanced"
+    # Ultra only: run the verification gate on the result; concurrent sub-agents.
+    verify: bool = False
+    max_parallel: int | None = Field(default=None, ge=1, le=6)
 
 
 class ClarifyPayload(BaseModel):
     answers: str = Field(min_length=1, max_length=20_000)
+
+
+class ResumePayload(BaseModel):
+    # The chat to run the extra attempt in; default: the task's own live chat.
+    live_id: str | None = None
 
 
 class ControlPayload(BaseModel):
@@ -216,7 +224,12 @@ async def send_message(
         await session.send_user_message(payload.content)
         return {"ok": True, "task_id": None}
     task_id = await _workbench(services).start_task(
-        live_id, payload.content, mode=payload.mode, strategy=payload.strategy
+        live_id,
+        payload.content,
+        mode=payload.mode,
+        strategy=payload.strategy,
+        verify=payload.verify,
+        max_parallel=payload.max_parallel,
     )
     if task_id is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
@@ -272,6 +285,23 @@ async def clarify_task(
     if not await workbench.clarify(task_id, payload.answers):
         raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND)
     return {"ok": True}
+
+
+@router.post("/chat/api/tasks/{task_id}/resume")
+async def resume_task(
+    task_id: str,
+    payload: ResumePayload | None = None,
+    workbench: WorkbenchPort = Depends(_workbench),
+):
+    live_id = payload.live_id if payload else None
+    if not await workbench.resume(task_id, live_id):
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND)
+    return {"ok": True}
+
+
+@router.get("/chat/api/project")
+async def project(cwd: str, workbench: WorkbenchPort = Depends(_workbench)):
+    return workbench.project(cwd)
 
 
 @router.get("/chat/api/tasks/{task_id}")

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Claude Messages API product flow."""
 
 import asyncio

@@ -286,7 +286,8 @@ async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
 async def test_stream_restarts_reasoning_reconciliation_after_early_retry(
     kilo_provider,
 ):
-    abandoned = AsyncStream([_chunk(reasoning="discarded ")])
+    # Cut off before its first output delta, so the retry stays invisible.
+    abandoned = AsyncStream([_chunk()])
     recovered = AsyncStream(
         [
             _chunk(reasoning_details=[{"type": "reasoning.text", "text": "plan "}]),

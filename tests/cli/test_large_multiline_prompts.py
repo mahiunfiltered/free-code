@@ -9,18 +9,14 @@ Verifies:
 6. ManagedClaudeSession.start_task accurately pipes stdin data and closes stdin.
 """
 
-import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from free_claude_code.cli.managed.claude import (
-    MANAGED_CLAUDE_MODEL_TIER,
     ManagedClaudeConfig,
-    ManagedClaudeInvocation,
     ManagedClaudeTaskRequest,
-    build_managed_claude_command,
     build_managed_claude_invocation,
 )
 from free_claude_code.cli.managed.session import ManagedClaudeSession
@@ -66,7 +62,9 @@ def test_short_prompt_uses_command_line_argument() -> None:
     assert invocation.argv[p_idx + 1] == short_prompt
 
 
-@pytest.mark.parametrize("size_bytes", [8193, 32 * 1024, 64 * 1024, 100 * 1024, 250 * 1024])
+@pytest.mark.parametrize(
+    "size_bytes", [8193, 32 * 1024, 64 * 1024, 100 * 1024, 250 * 1024]
+)
 def test_large_prompts_use_stdin_streaming(size_bytes: int) -> None:
     # Generate large prompt
     large_prompt = "A" * size_bytes
@@ -93,7 +91,7 @@ def test_multiline_prompt_with_code_blocks_preserved() -> None:
         "Here is the python code to inspect:\n\n"
         "```python\n"
         "def compute_metrics(data: list[float]) -> dict[str, float]:\n"
-        "    \"\"\"Calculate mean and standard deviation.\"\"\"\n"
+        '    """Calculate mean and standard deviation."""\n'
         "    if not data:\n"
         "        return {'mean': 0.0, 'std': 0.0}\n"
         "    mean = sum(data) / len(data)\n"
@@ -136,7 +134,7 @@ def test_windows_special_characters_not_corrupted() -> None:
     special_prompt = (
         "Command line test with special shell metacharacters:\n"
         "echo %PATH% & dir /s | findstr /i test > output.txt < input.txt\n"
-        "powershell -Command \"Get-Process | Where-Object { $_.CPU -gt 10 }\"\n"
+        'powershell -Command "Get-Process | Where-Object { $_.CPU -gt 10 }"\n'
         "delayed!expansion!test! ^carets^ and `backticks` and 'single' and \"double\" quotes\n"
         "Paths: C:\\Users\\Administrator\\AppData\\Local\\Temp\\test.log\n"
     ) * 100  # Expand to exceed 8KB
@@ -162,8 +160,12 @@ async def test_session_start_task_pipes_large_prompt_via_stdin() -> None:
     mock_stdin.wait_closed = AsyncMock()
 
     mock_stdout = MagicMock()
-    mock_stdout.read = AsyncMock(side_effect=[b'{"type":"init","session_id":"s1"}\n', b""])
-    mock_stdout.readline = AsyncMock(side_effect=[b'{"type":"init","session_id":"s1"}\n', b""])
+    mock_stdout.read = AsyncMock(
+        side_effect=[b'{"type":"init","session_id":"s1"}\n', b""]
+    )
+    mock_stdout.readline = AsyncMock(
+        side_effect=[b'{"type":"init","session_id":"s1"}\n', b""]
+    )
 
     mock_stderr = MagicMock()
     mock_stderr.read = AsyncMock(side_effect=[b""])
@@ -184,9 +186,7 @@ async def test_session_start_task_pipes_large_prompt_via_stdin() -> None:
     )
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
-        events = []
-        async for event in session.start_task(prompt=large_prompt):
-            events.append(event)
+        events = [event async for event in session.start_task(prompt=large_prompt)]
 
     mock_stdin.write.assert_called_once_with(large_prompt.encode("utf-8"))
     mock_stdin.drain.assert_awaited_once()

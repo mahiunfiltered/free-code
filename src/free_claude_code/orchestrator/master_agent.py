@@ -1,20 +1,15 @@
-from __future__ import annotations
-
 """High-autonomy Master Agent orchestrator with bounded execution and service isolation."""
 
-import asyncio
 import time
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from free_claude_code.core.recovery import BoundedRecoveryEngine
-from free_claude_code.core.shell_resolver import run_shell_command
 from free_claude_code.core.watchdog import AntiStagnationWatchdog
 from free_claude_code.orchestrator.conflict_manager import ConflictManager
 from free_claude_code.orchestrator.models import (
     AgentRole,
-    DependencyKind,
     ModelRole,
     Task,
     TaskComplexity,
@@ -49,7 +44,9 @@ class AutonomousMasterAgent:
         self.model_name = model_name
         self.enable_ui = enable_ui
         self.conflict_manager = ConflictManager()
-        self.watchdog = AntiStagnationWatchdog(inactivity_timeout_seconds=inactivity_timeout_seconds)
+        self.watchdog = AntiStagnationWatchdog(
+            inactivity_timeout_seconds=inactivity_timeout_seconds
+        )
         self.worker_pool = WorkerPool(
             max_parallel_agents=max_parallel_agents,
             conflict_manager=self.conflict_manager,
@@ -101,9 +98,14 @@ class AutonomousMasterAgent:
                 t = tasks[0]
                 t.complexity = TaskComplexity.TRIVIAL
                 self._render_progress("FAST_PATH_RUNNING", tasks)
-                res_task = await self.worker_pool.execute_task(t, task_executor_fn, timeout_seconds=total_timeout_seconds)
+                res_task = await self.worker_pool.execute_task(
+                    t, task_executor_fn, timeout_seconds=total_timeout_seconds
+                )
                 dur = time.time() - start_time
-                self._render_progress("COMPLETED" if res_task.status == TaskState.COMPLETED else "FAILED", tasks)
+                self._render_progress(
+                    "COMPLETED" if res_task.status == TaskState.COMPLETED else "FAILED",
+                    tasks,
+                )
                 return WorkflowResult(
                     goal=goal,
                     success=(res_task.status == TaskState.COMPLETED),
@@ -126,7 +128,9 @@ class AutonomousMasterAgent:
 
             # 2. Check task execution outcomes
             completed = [t for t in tasks if t.status == TaskState.COMPLETED]
-            failed = [t for t in tasks if t.status in (TaskState.FAILED, TaskState.BLOCKED)]
+            failed = [
+                t for t in tasks if t.status in (TaskState.FAILED, TaskState.BLOCKED)
+            ]
             success = len(failed) == 0
 
             # 3. Reviewer phase

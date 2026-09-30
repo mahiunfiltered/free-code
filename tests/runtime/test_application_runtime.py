@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 import free_claude_code.messaging.session.persistence as persistence_module
@@ -13,11 +14,14 @@ from free_claude_code.application.connected_accounts import (
 )
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.admin.persistence import PreparedAdminUpdate
+from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.core.storage import Store
 from free_claude_code.messaging.command_context import StopOutcome
 from free_claude_code.messaging.platforms.ports import (
     InboundMessageHandler,
@@ -30,6 +34,8 @@ from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
+from free_claude_code.workbench.model_client import ProxyModelClient
+from free_claude_code.workbench.tasks import TaskStore
 from tests.providers.support import make_provider_config
 
 
@@ -1169,3 +1175,73 @@ async def test_composition_publishes_startup_notice_after_runtime_and_repair() -
     assert "plans_directory" not in manager_constructor.call_args.kwargs
 
     assert await runtime.close() is True
+
+
+@pytest.mark.asyncio
+async def test_start_fails_workbench_tasks_left_running_by_the_last_process(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path / "fcc.db")
+    stuck = TaskStore(store).create("sess-1", str(tmp_path))
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    runtime = ApplicationRuntime(manager, transcriber=None, store=store)
+    try:
+        with patch.object(manager, "warm_referenced_model_cache", AsyncMock()):
+            await runtime.start()
+        record = runtime.workbench.tasks.get(stuck)
+        assert record.status == "FAILED"
+        [event] = [
+            e for e in runtime.workbench.tasks.events(stuck) if e.type == "task.status"
+        ]
+        assert event.payload["reason"] == "server restarted"
+        assert runtime.workbench.audit.recent(action="task.interrupted")
+    finally:
+        await runtime.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_ultra_analysis_client_is_reasoning_off_capped_and_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[dict[str, object]] = []
+
+    async def post(
+        self: httpx.AsyncClient,
+        url: str,
+        *,
+        json: dict[str, object],
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        sent.append(json)
+        return httpx.Response(
+            200,
+            json={"content": [{"type": "text", "text": "{}"}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    settings = _settings("nvidia_nim/nvidia/big-model")
+    dedicated = settings.model_copy(
+        update={"ultra_analysis_model": "nvidia_nim/meta/fast-model"}
+    )
+    default_rt = ApplicationRuntime(ProviderRuntimeManager(settings), transcriber=None)
+    dedicated_rt = ApplicationRuntime(
+        ProviderRuntimeManager(dedicated), transcriber=None
+    )
+    try:
+        client = default_rt._analysis_client()
+        assert isinstance(client, ProxyModelClient)
+        assert client.model == "claude-3-freecc-no-thinking/nvidia_nim/nvidia/big-model"
+        route = ModelRouter(settings).resolve(client.model)
+        assert route.reasoning_preference is ReasoningPreference.OFF
+        assert route.primary.provider_model_ref == "nvidia_nim/nvidia/big-model"
+        await client.complete("system", "user")
+        assert sent[0]["max_tokens"] == 1500 and sent[0]["model"] == client.model
+
+        fast = dedicated_rt._analysis_client()
+        assert isinstance(fast, ProxyModelClient)
+        assert fast.model == "claude-3-freecc-no-thinking/nvidia_nim/meta/fast-model"
+    finally:
+        assert await default_rt.close() is True
+        assert await dedicated_rt.close() is True

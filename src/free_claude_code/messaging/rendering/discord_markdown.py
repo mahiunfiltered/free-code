@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Discord markdown utilities.
 
 Discord uses standard markdown: **bold**, *italic*, `code`, ```code block```.

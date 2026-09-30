@@ -283,3 +283,57 @@ async def test_model_free_text_ops_become_must_not_items():
     r = await compile_intent("Fix add() in calc.py", model)
     assert r.contract.scope.prohibited_ops == ["git.push"]
     assert "modify test files" in r.contract.must_not
+
+
+# --------------------------------------------------------------------------- scope-shaped must-not
+
+
+TASK = "Fix add() in calc.py. Only modify calc.py and tests/test_calc.py."
+
+
+@pytest.mark.asyncio
+async def test_model_outside_rule_becomes_allowed_scope_not_must_not():
+    model = FakeModel(
+        '{"must_not": ["Modify any file outside calc.py and tests/test_calc.py",'
+        ' "Delete the README"]}'
+    )
+    r = await compile_intent("Fix add() in calc.py", model)
+    k = r.contract
+    assert "Modify any file outside calc.py and tests/test_calc.py" not in k.must_not
+    assert "Delete the README" in k.must_not  # unrelated model items still added
+    assert k.scope.allowed_paths == ["**/calc.py", "tests/test_calc.py"]
+    assert not k.scope.protected_paths
+    assert any("scope restriction" in w for w in r.warnings)
+
+
+@pytest.mark.asyncio
+async def test_model_must_not_forbidding_user_allowed_path_is_dropped():
+    model = FakeModel(
+        '{"must_not": ["modify tests/test_calc.py", "touch setup.cfg"],'
+        ' "scope": {"protected_paths": ["calc.py", "docs/"]}}'
+    )
+    r = await compile_intent(TASK, model)
+    k = r.contract
+    assert "modify tests/test_calc.py" not in k.must_not
+    assert "touch setup.cfg" in k.must_not
+    assert "**/calc.py" not in k.scope.protected_paths
+    assert "docs/**" in k.scope.protected_paths
+    assert (
+        sum("user allowed" in w or "explicitly allowed" in w for w in r.warnings) == 2
+    )
+
+
+def test_user_outside_phrasing_allows_rather_than_protects():
+    k = extract_deterministic(
+        "Fix add(). Don't modify anything outside calc.py"
+    ).contract
+    assert k.must_not == ["modify anything outside calc.py"]
+    assert k.scope.allowed_paths == ["**/calc.py"]
+    assert k.scope.protected_paths == []
+
+
+@pytest.mark.asyncio
+async def test_model_directory_must_not_covering_allowed_file_is_dropped():
+    r = await compile_intent(TASK, FakeModel('{"must_not": ["modify tests/"]}'))
+    assert "modify tests/" not in r.contract.must_not
+    assert any("explicitly allowed" in w for w in r.warnings)

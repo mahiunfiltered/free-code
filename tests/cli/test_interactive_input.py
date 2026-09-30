@@ -2,7 +2,8 @@
 
 import io
 import sys
-from unittest.mock import MagicMock, patch
+import time
+from unittest.mock import patch
 
 import pytest
 
@@ -10,7 +11,6 @@ from free_claude_code.cli.interactive_input import (
     MultilineBuffer,
     configure_windows_console_modes,
     diagnose_terminal_input,
-    get_clipboard_text,
     get_windows_clipboard_text,
     print_diagnostics,
     set_windows_clipboard_text,
@@ -48,12 +48,7 @@ def test_multiline_buffer_basic_operations() -> None:
 def test_multiline_buffer_insert_multiline_text() -> None:
     buf = MultilineBuffer()
     sample_text = (
-        "# Plan\n"
-        "```python\n"
-        "def test_func():\n"
-        "    return 'success'\n"
-        "```\n"
-        "End of prompt."
+        "# Plan\n```python\ndef test_func():\n    return 'success'\n```\nEnd of prompt."
     )
     buf.insert_text(sample_text)
     assert buf.get_text() == sample_text
@@ -179,9 +174,7 @@ def test_claude_launcher_diagnose_input_flag() -> None:
 def test_claude_launcher_paste_flag_with_clipboard() -> None:
     test_clip_prompt = "Refactor this module from clipboard"
     with (
-        patch(
-            "free_claude_code.cli.launchers.claude.get_settings"
-        ) as mock_settings,
+        patch("free_claude_code.cli.launchers.claude.get_settings") as mock_settings,
         patch(
             "free_claude_code.cli.launchers.claude.preflight_proxy",
             return_value=None,
@@ -194,9 +187,7 @@ def test_claude_launcher_paste_flag_with_clipboard() -> None:
             "free_claude_code.cli.interactive_input.get_clipboard_text",
             return_value=test_clip_prompt,
         ),
-        patch(
-            "free_claude_code.cli.launchers.claude.run_client_process"
-        ) as mock_run,
+        patch("free_claude_code.cli.launchers.claude.run_client_process") as mock_run,
     ):
         mock_settings.return_value.proxy_auth_token = "tok"
         launch(["--paste"])
@@ -238,9 +229,7 @@ def test_interactive_prompt_reader_posix_fallback() -> None:
 def test_claude_launcher_interactive_prompt_flag() -> None:
     interactive_prompt = "Interactive multiline prompt\nLine 2"
     with (
-        patch(
-            "free_claude_code.cli.launchers.claude.get_settings"
-        ) as mock_settings,
+        patch("free_claude_code.cli.launchers.claude.get_settings") as mock_settings,
         patch(
             "free_claude_code.cli.launchers.claude.preflight_proxy",
             return_value=None,
@@ -253,9 +242,7 @@ def test_claude_launcher_interactive_prompt_flag() -> None:
             "free_claude_code.cli.interactive_input.InteractivePromptReader.read_prompt",
             return_value=interactive_prompt,
         ),
-        patch(
-            "free_claude_code.cli.launchers.claude.run_client_process"
-        ) as mock_run,
+        patch("free_claude_code.cli.launchers.claude.run_client_process") as mock_run,
     ):
         mock_settings.return_value.proxy_auth_token = "tok"
         launch(["--prompt"])
@@ -322,8 +309,13 @@ def test_required_multiline_prompt_from_user_spec() -> None:
 def test_claude_launcher_legacy_console_paste_flag() -> None:
     with (
         patch("free_claude_code.cli.launchers.claude.get_settings") as mock_settings,
-        patch("free_claude_code.cli.launchers.claude.preflight_proxy", return_value=None),
-        patch("free_claude_code.cli.launchers.claude.resolve_client_binary", return_value="claude"),
+        patch(
+            "free_claude_code.cli.launchers.claude.preflight_proxy", return_value=None
+        ),
+        patch(
+            "free_claude_code.cli.launchers.claude.resolve_client_binary",
+            return_value="claude",
+        ),
         patch("free_claude_code.cli.launchers.claude.run_client_process") as mock_run,
     ):
         mock_settings.return_value.proxy_auth_token = "tok"
@@ -331,7 +323,3 @@ def test_claude_launcher_legacy_console_paste_flag() -> None:
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["legacy_console_paste"] is True
-
-
-
-

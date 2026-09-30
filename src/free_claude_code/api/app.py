@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Pure FastAPI application factory."""
 
 from fastapi import FastAPI, Request

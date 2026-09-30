@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Google AI Studio Gemini provider (OpenAI-compatible chat completions)."""
 
 from free_claude_code.core.anthropic import ReasoningReplayMode

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared API request validation and safe error logging."""
 
 from collections.abc import Sequence

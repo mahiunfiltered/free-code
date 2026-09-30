@@ -16,6 +16,6 @@ class ReviewerAgent(BaseAgent):
         return AgentMessage(
             sender=self.name,
             recipient=message.sender,
-            content=review,
-            metadata={"type": "review", "approved": review.get("approved", False)}
+            content=review["summary"],
+            metadata={"type": "review", **review},
         )

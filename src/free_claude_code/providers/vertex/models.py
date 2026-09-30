@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Vertex publisher-model response parsing."""
 
 from collections.abc import Mapping, Sequence

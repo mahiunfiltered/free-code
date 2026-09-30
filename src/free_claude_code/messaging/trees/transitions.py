@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Detached transition values crossing the messaging tree ownership boundary."""
 
 from dataclasses import dataclass

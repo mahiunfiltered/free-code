@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Canonical installed Free Claude Code package version."""
 
 from importlib.metadata import PackageNotFoundError

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Incremental repository indexer for fast, low-token file and symbol discovery.
 
 Prevents repeated full-tree filesystem traversals and excessive context reloading.
@@ -9,8 +7,8 @@ Tracks file mtimes and only updates modified or new files.
 import ast
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Sequence
 
 
 @dataclass
@@ -60,19 +58,21 @@ class IncrementalRepoIndexer:
         try:
             tree = ast.parse(content)
             for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
                     symbols.append(node.name)
                 elif isinstance(node, ast.Import):
-                    for alias in node.names:
-                        imports.append(alias.name)
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module:
-                        imports.append(node.module)
+                    imports.extend(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    imports.append(node.module)
         except Exception:
             pass
         return symbols, imports
 
-    def scan(self, force: bool = False, max_files: int = 5000) -> dict[str, FileIndexEntry]:
+    def scan(
+        self, force: bool = False, max_files: int = 5000
+    ) -> dict[str, FileIndexEntry]:
         """Scans repository incrementally, only parsing changed files."""
         now = time.time()
         # Scan if forced or if more than 5 seconds elapsed since last scan
@@ -80,8 +80,17 @@ class IncrementalRepoIndexer:
             return self._index
 
         ignore_dirs = {
-            ".git", ".venv", "venv", "__pycache__", "node_modules",
-            ".gemini", ".idea", ".vscode", "dist", "build", ".pytest_cache"
+            ".git",
+            ".venv",
+            "venv",
+            "__pycache__",
+            "node_modules",
+            ".gemini",
+            ".idea",
+            ".vscode",
+            "dist",
+            "build",
+            ".pytest_cache",
         }
 
         current_paths = set()
@@ -114,7 +123,7 @@ class IncrementalRepoIndexer:
 
                 if lang == "python" and size < 500_000:
                     try:
-                        with open(full_path, "r", encoding="utf-8", errors="ignore") as fp:
+                        with open(full_path, encoding="utf-8", errors="ignore") as fp:
                             symbols, imports = self._extract_python_symbols(fp.read())
                     except Exception:
                         pass
@@ -137,7 +146,9 @@ class IncrementalRepoIndexer:
         self._last_scan_time = now
         return self._index
 
-    def find_relevant_files(self, keywords: Sequence[str], limit: int = 10) -> list[FileIndexEntry]:
+    def find_relevant_files(
+        self, keywords: Sequence[str], limit: int = 10
+    ) -> list[FileIndexEntry]:
         """Finds files relevant to a task by query keywords, symbols, or paths."""
         self.scan()
         scores: list[tuple[float, FileIndexEntry]] = []

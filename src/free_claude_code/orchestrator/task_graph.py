@@ -1,18 +1,14 @@
-from __future__ import annotations
-
 """Smart task graph and dependency DAG with dynamic worker auto-scaling."""
 
 import os
 from dataclasses import dataclass, field
-from enum import IntEnum, StrEnum
-from typing import Sequence
+from enum import IntEnum
 
 from free_claude_code.orchestrator.models import (
     AgentRole,
     DependencyKind,
     ModelRole,
     Task,
-    TaskState,
 )
 
 
@@ -46,7 +42,9 @@ class GraphNode:
             model_role=self.model_role,
             scope_paths=self.files_out,
             dependencies=self.dependencies,
-            dependency_kind=DependencyKind.DEPENDENT if self.dependencies else DependencyKind.INDEPENDENT,
+            dependency_kind=DependencyKind.DEPENDENT
+            if self.dependencies
+            else DependencyKind.INDEPENDENT,
         )
 
 
@@ -71,9 +69,9 @@ class SmartTaskGraph:
                     if dep not in self._nodes:
                         continue
                     if visited.get(dep) == 1:
-                        return path + [dep]
+                        return [*path, dep]
                     if visited.get(dep, 0) == 0:
-                        res = _dfs(dep, path + [dep])
+                        res = _dfs(dep, [*path, dep])
                         if res:
                             return res
             visited[node_id] = 2
@@ -96,10 +94,14 @@ class SmartTaskGraph:
         independent_count = sum(1 for n in self._nodes.values() if not n.dependencies)
         cpu_count = os.cpu_count() or 4
         safe_worker_capacity = max(2, min(cpu_count, max_system_limit))
-        optimal = max(1, min(independent_count or 1, safe_worker_capacity, provider_limit))
+        optimal = max(
+            1, min(independent_count or 1, safe_worker_capacity, provider_limit)
+        )
         return optimal
 
     def to_tasks(self) -> list[Task]:
         """Converts graph nodes to orchestrator tasks sorted by priority."""
-        nodes = sorted(self._nodes.values(), key=lambda n: int(n.priority), reverse=True)
+        nodes = sorted(
+            self._nodes.values(), key=lambda n: int(n.priority), reverse=True
+        )
         return [n.to_task() for n in nodes]

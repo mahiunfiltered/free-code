@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Browser-friendly local server URLs shared by runtime and launchers."""
 
 from free_claude_code.config.settings import Settings

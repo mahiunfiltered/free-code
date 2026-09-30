@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Local admin UI routes and APIs."""
 
 import ipaddress

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Provider execution shared by inbound API adapters."""
 
 import asyncio

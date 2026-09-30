@@ -9,7 +9,9 @@ Public API:
     ModelClient  (Protocol: async complete(system, user) -> str)
 
 Rules: deterministic extraction always runs and its MUST/MUST_NOT/PRESERVE items are never
-removed or rewritten; a model may only ADD items (contradictions are kept with a warning);
+removed or rewritten; a model may only ADD items (contradictions are kept with a warning),
+except that model MUST_NOT/protected paths never forbid paths the user explicitly allowed
+(dropped with a warning) and "modify anything outside X" items become allowed scope;
 invalid model output degrades to the deterministic contract. High/critical ambiguities or
 non-reversible assumptions block for clarification (assumption firewall).
 """
@@ -18,6 +20,7 @@ import asyncio
 import hashlib
 import json
 import re
+import sys
 from dataclasses import asdict, dataclass, field
 from typing import Literal, Protocol, cast
 
@@ -174,6 +177,47 @@ def path_glob(token: str) -> str:
     return tok if "/" in tok else f"**/{tok}"
 
 
+def _glob_re(pattern: str) -> re.Pattern[str]:
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        else:
+            ch = pattern[i]
+            out.append("[^/]*" if ch == "*" else "[^/]" if ch == "?" else re.escape(ch))
+            i += 1
+    return re.compile("".join(out) + "$", re.I if sys.platform == "win32" else 0)
+
+
+def matches_any(path: str, patterns: list[str]) -> bool:
+    return any(
+        _glob_re(p.replace("\\", "/").removeprefix("./")).match(path) for p in patterns
+    )
+
+
+_EXCLUSION = re.compile(
+    r"\b(?:outside(?:\s+of)?|other than|except(?:\s+for)?|besides|apart from|beyond)\b",
+    re.I,
+)
+
+
+def split_scope_exclusion(text: str) -> tuple[str, list[str]]:
+    """Split "modify any file outside a.py and b/c.py" into its forbidding head and
+    the excepted paths: ("modify any file", ["a.py", "b/c.py"]).
+
+    Paths after an exclusion word are the allowed exception, never forbidden paths.
+    """
+
+    m = _EXCLUSION.search(text)
+    if m is None:
+        return text, []
+    return text[: m.start()], path_tokens(text[m.end() :])
+
+
 # --------------------------------------------------------------------------- deterministic rules
 
 _NEGATIONS = [
@@ -294,8 +338,11 @@ def _must_not(d: _Draft, text: str) -> None:
     for op, pattern in _OPS:
         if pattern.search(text):
             _add_unique(d.scope.prohibited_ops, op)
-    for tok in path_tokens(text):
+    head, excepted = split_scope_exclusion(text)
+    for tok in path_tokens(head):
         _add_unique(d.scope.protected_paths, path_glob(tok))
+    for tok in excepted:  # "don't touch anything outside x.py" allows x.py
+        _add_unique(d.scope.allowed_paths, path_glob(tok))
     stripped = _STRIP_VERBS.match(text)
     if stripped:
         d.add(d.preserve, stripped.group(1))
@@ -510,6 +557,47 @@ def _impact_items(
     return out
 
 
+def _forbids_allowed(token: str, allowed: list[str]) -> bool:
+    glob = path_glob(token)
+    bare = glob.removeprefix("**/")
+    return (
+        glob in allowed
+        or matches_any(bare, allowed)
+        or matches_any(token, allowed)
+        or any(matches_any(a.removeprefix("**/"), [glob]) for a in allowed)
+    )
+
+
+def _keep_model_must_not(
+    contract: IntentContract, item: str, user_allowed: list[str], warnings: list[str]
+) -> bool:
+    """Model MUST_NOT items may only add constraints the user's scope permits.
+
+    "Modify any file outside a.py" is a scope restriction: it becomes allowed paths,
+    not a MUST_NOT whose paths look forbidden. An item forbidding a path the user
+    explicitly allowed contradicts the deterministic scope and is dropped.
+    """
+
+    head, excepted = split_scope_exclusion(item)
+    if excepted and not path_tokens(head):
+        for tok in excepted:
+            _add_unique(contract.scope.allowed_paths, path_glob(tok))
+        warnings.append(
+            f'model MUST_NOT "{item}" is a scope restriction; converted to allowed paths'
+        )
+        return False
+    conflicts = [
+        tok for tok in path_tokens(head) if _forbids_allowed(tok, user_allowed)
+    ]
+    if conflicts:
+        warnings.append(
+            f'dropped model MUST_NOT "{item}": it forbids {", ".join(conflicts)}, '
+            "which the user explicitly allowed"
+        )
+        return False
+    return True
+
+
 async def compile_intent(
     text: str,
     model: ModelClient | None = None,
@@ -546,10 +634,15 @@ async def compile_intent(
 
     c = result.contract
     deterministic_must_not = list(c.must_not)
+    user_allowed = list(c.scope.allowed_paths)
     for key in _LIST_FIELDS:
         bucket: list[str] = getattr(c, key)
         for item in lists[key]:
             if any(_overlaps(item, existing) for existing in bucket):
+                continue
+            if key == "must_not" and not _keep_model_must_not(
+                c, item, user_allowed, result.warnings
+            ):
                 continue
             bucket.append(item)
             for forbidden in deterministic_must_not if key == "must" else []:
@@ -565,6 +658,11 @@ async def compile_intent(
                 # Free-text op: keep the constraint as a MUST_NOT the gate can judge.
                 if not any(_overlaps(v, existing) for existing in c.must_not):
                     c.must_not.append(v)
+                continue
+            if key == "protected_paths" and _forbids_allowed(v, user_allowed):
+                result.warnings.append(
+                    f'dropped model protected path "{v}": the user allowed editing it'
+                )
                 continue
             _add_unique(bucket, v if key == "prohibited_ops" else path_glob(v))
     for criterion in lists["acceptance_criteria"]:

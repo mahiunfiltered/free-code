@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Direct OpenAI Responses-to-Chat Completions request translation."""
 
 import json

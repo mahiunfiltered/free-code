@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Single owner for application startup, shutdown, and runtime operations."""
 
 import asyncio
@@ -45,7 +43,10 @@ from free_claude_code.config.server_urls import (
     local_proxy_root_url,
 )
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.gateway_model_ids import gateway_model_id
+from free_claude_code.core.gateway_model_ids import (
+    gateway_model_id,
+    no_thinking_gateway_model_id,
+)
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.storage import Store
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
@@ -58,6 +59,7 @@ from free_claude_code.messaging.voice import Transcriber
 from free_claude_code.providers.key_pool import EndpointPool
 from free_claude_code.workbench.intent import ModelClient
 from free_claude_code.workbench.model_client import ProxyModelClient
+from free_claude_code.workbench.orchestration.planner import ANALYSIS_MAX_TOKENS
 from free_claude_code.workbench.service import WorkbenchService, launch_policy
 
 from .provider_manager import ProviderRuntimeManager
@@ -156,6 +158,7 @@ class ApplicationRuntime:
             workbench_store,
             sessions=self.chat_sessions,
             model_client_factory=self._model_client,
+            analysis_client_factory=self._analysis_client,
             usage_lookup=self._session_usage if endpoint_pool is not None else None,
         )
         self._started = False
@@ -178,6 +181,11 @@ class ApplicationRuntime:
             return
         logger.info("Starting Claude Code Proxy...")
         try:
+            if interrupted := self.workbench.close_interrupted():
+                logger.info(
+                    "Closed {} workbench task(s) left running by the last shutdown",
+                    len(interrupted),
+                )
             await self.provider_manager.warm_referenced_model_cache()
             self.provider_manager.start_model_list_refresh()
             await self._start_messaging_if_configured()
@@ -496,6 +504,17 @@ class ApplicationRuntime:
         """Helper-model calls (intent, planner) go through this proxy and its key pool."""
         return ProxyModelClient(
             self._proxy_target, model or gateway_model_id(self.settings.model)
+        )
+
+    def _analysis_client(self) -> ModelClient:
+        """Ultra's lead-agent call: ULTRA_ANALYSIS_MODEL (else MODEL), reasoning off."""
+        settings = self.settings
+        return ProxyModelClient(
+            self._proxy_target,
+            no_thinking_gateway_model_id(
+                settings.ultra_analysis_model or settings.model
+            ),
+            max_tokens=ANALYSIS_MAX_TOKENS,
         )
 
     def _session_usage(self, claude_session_id: str) -> JsonObject | None:

@@ -32,21 +32,23 @@ class AgentOrchestrator:
         print(f"[CODER] -> Generated code ({len(code_msg.content)} chars)\n")
 
         review_msg = await self._send("coder", "reviewer", code_msg.content)
-        print(f"[REVIEWER] -> {review_msg.content.get('summary', 'Review complete')}\n")
+        review = review_msg.metadata or {}
+        print(f"[REVIEWER] -> {review.get('summary', 'Review complete')}\n")
 
-        if not review_msg.content.get("approved", False):
+        if not review.get("approved", False):
             print("  -> Fixing issues...")
-            fix_msg = await self._send("reviewer", "coder", f"Fix: {review_msg.content['feedback']}")
+            fix_msg = await self._send("reviewer", "coder", f"Fix: {review['feedback']}")
             code_msg = fix_msg
             review_msg = await self._send("coder", "reviewer", fix_msg.content)
-            print(f"  -> Re-review: {review_msg.content.get('summary')}\n")
+            review = review_msg.metadata or {}
+            print(f"  -> Re-review: {review.get('summary')}\n")
 
         return {
             "goal": goal,
             "plan": plan_msg.content,
             "research": research_msg.content,
             "code": code_msg.content,
-            "review": review_msg.content,
+            "review": review,
             "history": self.history
         }
 

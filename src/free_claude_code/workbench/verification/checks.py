@@ -32,9 +32,11 @@ from free_claude_code.cli.process_registry import (
 from free_claude_code.workbench.checkpoints import TreeDiff
 from free_claude_code.workbench.intent import (
     IntentContract,
+    matches_any,
     path_glob,
     path_tokens,
     requirement_rows,
+    split_scope_exclusion,
 )
 from free_claude_code.workbench.verification.failures import (
     Failure,
@@ -273,28 +275,6 @@ def secret_scan(check: PlannedCheck, diff: TreeDiff | None) -> CheckResult:
         result.status = "failed"
         result.summary = f"{len(result.failures)} secret(s) in added lines; first: {result.failures[0].message}"
     return result
-
-
-def _glob_re(pattern: str) -> re.Pattern[str]:
-    out, i = [], 0
-    while i < len(pattern):
-        if pattern.startswith("**/", i):
-            out.append("(?:.*/)?")
-            i += 3
-        elif pattern.startswith("**", i):
-            out.append(".*")
-            i += 2
-        else:
-            ch = pattern[i]
-            out.append("[^/]*" if ch == "*" else "[^/]" if ch == "?" else re.escape(ch))
-            i += 1
-    return re.compile("".join(out) + "$", re.I if sys.platform == "win32" else 0)
-
-
-def matches_any(path: str, patterns: list[str]) -> bool:
-    return any(
-        _glob_re(p.replace("\\", "/").removeprefix("./")).match(path) for p in patterns
-    )
 
 
 def diff_scope(
@@ -563,7 +543,8 @@ def gap_matrix(
     """Gap matrix: requirement -> evidence -> status (covered | missing | failed).
 
     MUST: covered by a passing unit_test/http_probe, failed if one failed, else missing.
-    PRESERVE: as MUST (regression evidence), failed if a preserved path changed.
+    PRESERVE: covered by passing regression evidence; failed only if a preserved path
+    changed; a failing test leaves it missing (the test failure itself is retried).
     MUST_NOT / prohibited ops: diff heuristics; undecidable -> missing (needs review).
     """
 
@@ -592,30 +573,53 @@ def gap_matrix(
             if ctx is None:
                 rows.append(GapRow(rid, kind, text, "missing", ["diff unavailable"]))
                 continue
-            rules = [name for rx, name in _RULES if rx.search(text)]
-            rows.append(
-                _row_from_rules(
-                    rid,
-                    kind,
-                    text,
-                    rules,
-                    [path_glob(t) for t in path_tokens(text)],
-                    ctx,
-                )
+            # Only the forbidding head names forbidden paths/topics: in "modify any
+            # file outside a.py" a.py is the allowed exception, not a violation.
+            head, excepted = split_scope_exclusion(text)
+            rules = [name for rx, name in _RULES if rx.search(head)]
+            row = _row_from_rules(
+                rid,
+                kind,
+                text,
+                rules,
+                [path_glob(t) for t in path_tokens(head)],
+                ctx,
             )
+            if excepted:
+                allowed = [path_glob(t) for t in excepted]
+                outside = [p for p in ctx.files if not matches_any(p, allowed)]
+                if outside:
+                    row.status = "failed"
+                    row.evidence.append(
+                        f"changed outside {', '.join(allowed)}: {', '.join(outside[:5])}"
+                    )
+                elif row.status == "missing":
+                    row.status = "covered"
+                    row.evidence = [f"all changes within {', '.join(allowed)}"]
+            rows.append(row)
             continue
-        row = GapRow(
-            rid,
-            kind,
-            text,
-            "failed" if failing else "covered" if passing else "missing",
+        # A failing test fails a MUST (the behaviour is not there yet) but cannot
+        # prove a PRESERVE was broken: it is already reported (and retried) as a
+        # test failure, so the preserve row stays unconfirmed until tests pass.
+        # Only a change to the preserved thing itself violates it (below).
+        status: RowStatus = (
+            "covered"
+            if passing and not failing
+            else "failed"
+            if failing and kind == "must"
+            else "missing"
         )
+        row = GapRow(rid, kind, text, status)
         row.evidence = [f"{c}: failed" for c in failing] + [
             f"{c}: passed" for c in passing
         ]
         if not behaviour:
             row.evidence.append("no test or probe evidence available")
-        globs = [path_glob(t) for t in path_tokens(text)] if kind == "preserve" else []
+        globs = (
+            [path_glob(t) for t in path_tokens(split_scope_exclusion(text)[0])]
+            if kind == "preserve"
+            else []
+        )
         # A file the contract allows editing can only be partly preserved ("all other
         # code in calc.py"); a file-level check cannot judge that, the tests do.
         touched = [

@@ -35,6 +35,8 @@ class TaskNode:
     # Repo-relative globs; empty means the node is read-only.
     write_scope: list[str] = field(default_factory=list)
     acceptance_criteria: list[str] = field(default_factory=list)
+    # Detailed brief from the lead agent (Ultra mode): what to do, files, constraints.
+    instructions: str = ""
     status: NodeStatus = "pending"
     summary: str = ""
     error: str | None = None
@@ -46,6 +48,10 @@ class TaskNode:
     cost_usd: float | None = None
     turns: int | None = None
     reverted_out_of_scope: list[str] = field(default_factory=list)
+    # Files the node changed inside its scope, and (in-place runs, which cannot
+    # revert) files changed outside every concurrently running node's scope.
+    changed_files: list[str] = field(default_factory=list)
+    out_of_scope: list[str] = field(default_factory=list)
 
     @property
     def mutating(self) -> bool:
@@ -59,6 +65,7 @@ class TaskNode:
             "depends_on": list(self.depends_on),
             "write_scope": list(self.write_scope),
             "acceptance_criteria": list(self.acceptance_criteria),
+            "instructions": self.instructions,
             "status": self.status,
             "summary": self.summary,
             "error": self.error,
@@ -69,6 +76,8 @@ class TaskNode:
             "cost_usd": self.cost_usd,
             "turns": self.turns,
             "reverted_out_of_scope": list(self.reverted_out_of_scope),
+            "changed_files": list(self.changed_files),
+            "out_of_scope": list(self.out_of_scope),
         }
 
     @classmethod
@@ -93,6 +102,7 @@ class TaskNode:
             depends_on=_str_list(data, "depends_on"),
             write_scope=_str_list(data, "write_scope"),
             acceptance_criteria=_str_list(data, "acceptance_criteria"),
+            instructions=_opt_str(data, "instructions") or "",
             status=cast(NodeStatus, status),
             summary=_opt_str(data, "summary") or "",
             error=_opt_str(data, "error"),
@@ -103,6 +113,8 @@ class TaskNode:
             cost_usd=float(cost) if isinstance(cost, int | float) else None,
             turns=turns if isinstance(turns, int) else None,
             reverted_out_of_scope=_str_list(data, "reverted_out_of_scope"),
+            changed_files=_str_list(data, "changed_files"),
+            out_of_scope=_str_list(data, "out_of_scope"),
         )
 
 

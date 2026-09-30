@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Process-local OpenCode v1 configuration for FCC model routing."""
 
 from dataclasses import dataclass

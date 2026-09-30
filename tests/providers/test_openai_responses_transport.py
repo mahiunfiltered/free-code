@@ -574,8 +574,22 @@ async def test_early_truncated_retry_has_one_visible_lifecycle() -> None:
     def handler(_request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
+        # The first attempt is cut off before its first output delta.
         body = (
-            _sse(_text_delta("discarded"))
+            _sse(
+                {
+                    "type": "response.output_item.added",
+                    "sequence_number": 0,
+                    "output_index": 0,
+                    "item": {
+                        "type": "message",
+                        "id": "item_discarded",
+                        "role": "assistant",
+                        "status": "in_progress",
+                        "content": [],
+                    },
+                }
+            )
             if attempts == 1
             else _sse(_text_delta("kept"), _completed_event())
         )
@@ -594,7 +608,7 @@ async def test_early_truncated_retry_has_one_visible_lifecycle() -> None:
     parsed = parse_sse_text("".join(chunks))
     assert attempts == 2
     assert text_content(parsed) == "kept"
-    assert "discarded" not in "".join(chunks)
+    assert "item_discarded" not in "".join(chunks)
     assert sum(event.event == "message_start" for event in parsed) == 1
     assert sum(event.event == "message_stop" for event in parsed) == 1
     assert_anthropic_stream_contract(parsed)

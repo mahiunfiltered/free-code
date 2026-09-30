@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """LM Studio provider implementation (OpenAI-compatible chat completions).
 
 Switched from LM Studio's native Anthropic Messages endpoint (2026-07-04):

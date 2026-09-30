@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """OpenCode rich-catalog parsing and provider-scoped snapshot ownership."""
 
 import asyncio

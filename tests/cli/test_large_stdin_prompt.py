@@ -1,7 +1,6 @@
-import os
 import subprocess
 import sys
-import pytest
+
 
 def test_large_prompt_generation_and_transport():
     """Verify that a 100 KB prompt can be constructed and streamed without error."""
@@ -10,7 +9,11 @@ def test_large_prompt_generation_and_transport():
 
     # Test that Python subprocess can receive the large stream cleanly
     proc = subprocess.run(
-        [sys.executable, "-c", "import sys; data = sys.stdin.read(); print(f'RECEIVED_{len(data)}')"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; data = sys.stdin.read(); print(f'RECEIVED_{len(data)}')",
+        ],
         input=large_text,
         capture_output=True,
         text=True,

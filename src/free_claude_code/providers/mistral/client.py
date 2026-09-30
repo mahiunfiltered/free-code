@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Mistral La Plateforme provider implementation (OpenAI-compatible chat completions)."""
 
 from collections.abc import Mapping

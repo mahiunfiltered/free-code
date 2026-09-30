@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Best-effort token estimates for native Responses requests."""
 
 import json

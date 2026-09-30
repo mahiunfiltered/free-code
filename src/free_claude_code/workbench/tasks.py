@@ -7,11 +7,14 @@
     record_evidence(task_id, package) -> TaskStatus     # the gate's only path to VERIFIED
     get(task_id) / for_session(session_id) / evidence(task_id) / events(task_id)
     export(task_id, fmt="json"|"markdown") -> str       # latest evidence package
+    close_interrupted(reason) -> [(task_id, from, to)]  # startup: runs died with the server
 
 Lifecycle (M0005): RECEIVED -> INTENT_COMPILED -> (BLOCKED_FOR_CLARIFICATION ->)
 REQUIREMENTS_LOCKED -> RUNNING -> VERIFYING -> VERIFIED | FAILED_VERIFICATION |
 RECOVERY_REQUIRED (gate said NEEDS_REVIEW); FAILED_VERIFICATION -> RECOVERING -> RUNNING/
-VERIFYING; CANCELLED / FAILED from any non-terminal state. VERIFIED and FAILED_VERIFICATION
+VERIFYING; CANCELLED / FAILED from any non-terminal state. An Ultra run that is not
+verified goes RECEIVED (-> ... ) -> RUNNING -> COMPLETED: done, but with no claim of
+verification. VERIFIED and FAILED_VERIFICATION
 are set only by record_evidence from a VERIFYING task, and only when the package's
 disposition matches one recomputed from its own checks and gap matrix.
 """
@@ -36,26 +39,39 @@ from free_claude_code.workbench.verification.gate import (
 type TaskStatus = Literal[
     "RECEIVED", "INTENT_COMPILED", "BLOCKED_FOR_CLARIFICATION", "REQUIREMENTS_LOCKED",
     "RUNNING", "VERIFYING", "RECOVERING", "VERIFIED", "FAILED_VERIFICATION",
-    "RECOVERY_REQUIRED", "CANCELLED", "FAILED",
+    "RECOVERY_REQUIRED", "CANCELLED", "FAILED", "COMPLETED",
 ]  # fmt: skip
 
-TERMINAL: frozenset[str] = frozenset({"VERIFIED", "CANCELLED", "FAILED"})
+TERMINAL: frozenset[str] = frozenset({"VERIFIED", "CANCELLED", "FAILED", "COMPLETED"})
 GATE_ONLY: frozenset[str] = frozenset({"VERIFIED", "FAILED_VERIFICATION"})
 _ALWAYS = {"CANCELLED", "FAILED"}
 TRANSITIONS: dict[str, frozenset[str]] = {
     k: frozenset(v | _ALWAYS)
     for k, v in {
-        "RECEIVED": {"INTENT_COMPILED"},
+        # RECEIVED -> RUNNING: an Ultra run answered directly (no contract).
+        "RECEIVED": {"INTENT_COMPILED", "RUNNING"},
         "INTENT_COMPILED": {"BLOCKED_FOR_CLARIFICATION", "REQUIREMENTS_LOCKED"},
         "BLOCKED_FOR_CLARIFICATION": {"INTENT_COMPILED", "REQUIREMENTS_LOCKED"},
         "REQUIREMENTS_LOCKED": {"RUNNING"},
-        "RUNNING": {"VERIFYING"},
+        "RUNNING": {"VERIFYING", "COMPLETED"},
         "VERIFYING": {"VERIFIED", "FAILED_VERIFICATION", "RECOVERY_REQUIRED"},
         "FAILED_VERIFICATION": {"RECOVERING", "RECOVERY_REQUIRED"},
         "RECOVERING": {"RUNNING", "VERIFYING", "RECOVERY_REQUIRED"},
         "RECOVERY_REQUIRED": {"RECOVERING", "RUNNING"},
     }.items()
 }
+# States only a live run can leave; after a restart nothing drives them any more.
+# FAILED_VERIFICATION keeps its evidence, so it becomes resumable RECOVERY_REQUIRED.
+INTERRUPTED: dict[str, TaskStatus] = {
+    **dict.fromkeys(
+        (
+            "RECEIVED", "INTENT_COMPILED", "BLOCKED_FOR_CLARIFICATION",
+            "REQUIREMENTS_LOCKED", "RUNNING", "VERIFYING", "RECOVERING",
+        ),
+        "FAILED",
+    ),
+    "FAILED_VERIFICATION": "RECOVERY_REQUIRED",
+}  # fmt: skip
 _DISPOSITION_STATUS: dict[str, TaskStatus] = {
     "VERIFIED": "VERIFIED",
     "FAILED_VERIFICATION": "FAILED_VERIFICATION",
@@ -221,6 +237,20 @@ class TaskStore:
 
     def transition(self, task_id: str, to: TaskStatus, reason: str = "") -> None:
         self._set_status(task_id, to, reason, gate=False)
+
+    def close_interrupted(self, reason: str) -> list[tuple[str, str, TaskStatus]]:
+        """Settle tasks whose run died with the server; returns (id, from, to) each."""
+
+        rows = self._store.query(
+            f"SELECT id, status FROM workbench_tasks WHERE status IN ({', '.join('?' * len(INTERRUPTED))})",
+            tuple(INTERRUPTED),
+        )
+        closed: list[tuple[str, str, TaskStatus]] = []
+        for row in rows:
+            to = INTERRUPTED[row["status"]]
+            self.transition(row["id"], to, reason)
+            closed.append((row["id"], row["status"], to))
+        return closed
 
     def record_evidence(self, task_id: str, package: EvidencePackage) -> TaskStatus:
         """Persist a gate evidence package and move VERIFYING -> its disposition's status."""

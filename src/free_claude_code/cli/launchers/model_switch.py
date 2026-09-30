@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Interactive model switcher for Free Claude Code (registered as ``fcc-model-switch``)."""
 
 import json

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Admin response cache policy."""
 
 from fastapi import Response

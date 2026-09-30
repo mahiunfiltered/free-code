@@ -1,13 +1,12 @@
 import asyncio
-import time
+
 import pytest
 
 from free_claude_code.orchestrator import (
+    AgentRole,
     AutonomousMasterAgent,
     ConflictManager,
     DependencyKind,
-    AgentRole,
-    ModelRole,
     Task,
     TaskScheduler,
     TaskState,
@@ -34,9 +33,7 @@ async def test_worker_pool_concurrency():
             active_count -= 1
         return f"done_{task.task_id}"
 
-    tasks = [
-        Task(task_id=f"t{i}", name=f"Task {i}", description="") for i in range(5)
-    ]
+    tasks = [Task(task_id=f"t{i}", name=f"Task {i}", description="") for i in range(5)]
 
     results = await asyncio.gather(*(pool.execute_task(t, mock_work) for t in tasks))
     assert max_observed_active <= 2
@@ -69,7 +66,13 @@ async def test_dag_scheduler_dependencies():
 
     t1 = Task(task_id="t1", name="Task 1", description="")
     t2 = Task(task_id="t2", name="Task 2", description="")
-    t3 = Task(task_id="t3", name="Task 3", description="", dependencies=["t1", "t2"], dependency_kind=DependencyKind.DEPENDENT)
+    t3 = Task(
+        task_id="t3",
+        name="Task 3",
+        description="",
+        dependencies=["t1", "t2"],
+        dependency_kind=DependencyKind.DEPENDENT,
+    )
 
     task_map = await scheduler.run_plan([t1, t2, t3], mock_work)
     assert task_map["t1"].status == TaskState.COMPLETED
@@ -115,10 +118,22 @@ async def test_master_agent_end_to_end_flow():
         return f"Processed {task.name}"
 
     tasks = [
-        Task(task_id="db", name="Inspect DB", description="", role=AgentRole.RESEARCHER),
-        Task(task_id="api", name="Inspect API", description="", role=AgentRole.RESEARCHER),
-        Task(task_id="ui", name="Inspect UI", description="", role=AgentRole.RESEARCHER),
-        Task(task_id="integrate", name="Integration", description="", dependencies=["db", "api", "ui"], role=AgentRole.CODER),
+        Task(
+            task_id="db", name="Inspect DB", description="", role=AgentRole.RESEARCHER
+        ),
+        Task(
+            task_id="api", name="Inspect API", description="", role=AgentRole.RESEARCHER
+        ),
+        Task(
+            task_id="ui", name="Inspect UI", description="", role=AgentRole.RESEARCHER
+        ),
+        Task(
+            task_id="integrate",
+            name="Integration",
+            description="",
+            dependencies=["db", "api", "ui"],
+            role=AgentRole.CODER,
+        ),
     ]
 
     result = await master.run_plan("Build Module", tasks, mock_work)

@@ -41,7 +41,10 @@ from free_claude_code.config.provider_catalog import (
     ZAI_CODING_DEFAULT_BASE,
     ZENMUX_DEFAULT_BASE,
 )
-from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.admission import (
+    UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
+    ProviderAdmissionController,
+)
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
@@ -865,6 +868,7 @@ def test_create_provider_instantiates_each_builtin():
         github_models_token="test_github_models_token",
         kimi_api_key="test_kimi_key",
         kimi_code_api_key="test_kimi_code_key",
+        openai_api_key="test_openai_key",
         provider_rate_limit=7,
         provider_rate_window=11,
         provider_max_concurrency=3,
@@ -873,6 +877,7 @@ def test_create_provider_instantiates_each_builtin():
     cases = {
         "nvidia_nim": NvidiaNimProvider,
         "openai": OpenAICodexProvider,
+        "openai_api": OpenAIChatProvider,
         "cline_pass": OpenAIChatProvider,
         "xai": OpenAIChatProvider,
         "qwencloud": OpenAIChatProvider,
@@ -954,6 +959,7 @@ def test_create_provider_instantiates_each_builtin():
                 rate_limit=7,
                 rate_window=11,
                 max_concurrency=3,
+                max_attempts=UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
             )
             admission_factory.reset_mock()
 

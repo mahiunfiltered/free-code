@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Typed metadata owned by the Admin configuration boundary."""
 
 from dataclasses import dataclass

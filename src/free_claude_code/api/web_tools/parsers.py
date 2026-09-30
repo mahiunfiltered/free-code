@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """HTML parsing for web_search / web_fetch."""
 
 import html

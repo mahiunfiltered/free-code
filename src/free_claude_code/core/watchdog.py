@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Anti-stagnation watchdog and activity monitor.
 
 Monitors active tasks and system operations. If no meaningful progress occurs
@@ -7,6 +5,7 @@ within the configured threshold (default 30 seconds), diagnoses the bottleneck
 (API hang, shell deadlock, worker stall) and triggers graceful remediation.
 """
 
+import contextlib
 import threading
 import time
 from collections.abc import Callable
@@ -124,16 +123,15 @@ class AntiStagnationWatchdog:
         while self._running:
             time.sleep(2.0)
             now = time.time()
-            stalled: list[ActivityRecord] = []
             with self._lock:
-                for act in self._activities.values():
-                    if act.is_active and (now - act.last_heartbeat) > self.inactivity_timeout_seconds:
-                        stalled.append(act)
+                stalled = [
+                    act
+                    for act in self._activities.values()
+                    if act.is_active
+                    and (now - act.last_heartbeat) > self.inactivity_timeout_seconds
+                ]
 
             for act in stalled:
-                diag = self.diagnose_stagnation(act)
                 if self.on_stagnation:
-                    try:
+                    with contextlib.suppress(Exception):
                         self.on_stagnation(act)
-                    except Exception:
-                        pass

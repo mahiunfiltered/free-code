@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Chat-source output writers for Anthropic Messages and OpenAI Responses."""
 
 import hashlib

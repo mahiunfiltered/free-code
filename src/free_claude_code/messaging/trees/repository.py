@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Manager-owned index of messaging tree aggregates."""
 
 from loguru import logger

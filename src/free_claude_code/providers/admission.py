@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Provider-owned admission, concurrency, and coordinated retry lifecycle."""
 
 import asyncio

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Protocol-neutral execution failure semantics."""
 
 from dataclasses import FrozenInstanceError, dataclass

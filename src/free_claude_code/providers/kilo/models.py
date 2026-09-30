@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Kilo.ai model-catalog interpretation."""
 
 from collections.abc import Mapping, Sequence

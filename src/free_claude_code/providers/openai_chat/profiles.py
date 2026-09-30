@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Declarative profiles for ordinary OpenAI-compatible providers."""
 
 from collections.abc import Mapping

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Track and clean up spawned CLI subprocesses.
 
 This is a safety net for cases where the server is interrupted (Ctrl+C) and the

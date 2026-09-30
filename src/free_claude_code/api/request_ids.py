@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Ingress-owned HTTP request correlation."""
 
 import uuid
@@ -9,6 +7,7 @@ from loguru import logger
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from free_claude_code.core.request_context import bind_claude_session_id
 from free_claude_code.core.trace import extract_claude_session_id_from_headers
 
 REQUEST_ID_HEADER = "request-id"
@@ -55,11 +54,14 @@ class RequestCorrelationMiddleware:
                 message["headers"] = raw_headers
             await send(message)
 
-        with logger.contextualize(
-            http_method=method,
-            http_path=path,
-            claude_session_id=claude_sid,
-            request_id=request_id,
+        with (
+            bind_claude_session_id(claude_sid),
+            logger.contextualize(
+                http_method=method,
+                http_path=path,
+                claude_session_id=claude_sid,
+                request_id=request_id,
+            ),
         ):
             await self._app(scope, receive, send_with_correlation)
 

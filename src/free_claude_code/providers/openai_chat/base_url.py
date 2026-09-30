@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """OpenAI-compatible API base URL policy."""
 
 

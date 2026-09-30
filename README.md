@@ -170,8 +170,12 @@ fcc-aider
 
 ### Desktop Chat App
 
-FCC includes a local, Claude-desktop-style coding chat at `http://127.0.0.1:8082/chat`. It drives the real Claude Code CLI through stream-json, so file edits, commands, permission prompts, and plan mode work the same way as in the terminal. Open it from the tray (**Open Claude**), with `fcc-desktop`, or on Windows with `Claude-Desktop.bat` from a repo checkout. Choose its models with `CHAT_MODELS` in Admin.
+FCC includes a local, Claude-desktop-style coding chat at `http://127.0.0.1:8082/chat`. It drives the real Claude Code CLI through stream-json, so file edits, commands, permission prompts, and plan mode work the same way as in the terminal. Open it from the tray (**Open Claude**), with `fcc-desktop`, or on Windows with `Claude-Desktop.bat` from a repo checkout. On Windows, `Start-All.bat` starts Ollama and a local NVIDIA proxy (each only if present), the FCC server, and the app window in one go. `Stop-All.bat` stops all of them, including chat processes. Choose its models with `CHAT_MODELS` in Admin.
 See [docs/claude-desktop-recreation.md](docs/claude-desktop-recreation.md) for the architecture, protocol walkthrough, setup, security notes, and student exercises. This app is unofficial and not affiliated with Anthropic.
+
+#### Verified workbench
+
+The chat's run-mode chip adds **Verified** and **Parallel** modes. A Verified run locks your request into an intent contract (MUST / MUST NOT / PRESERVE / scope) and takes a git checkpoint. When Claude finishes, it runs your project's own tests, typecheck, build, and lint plus a secret scan and a scope check. It retries with bounded recovery prompts and marks the task **Verified** only on real evidence. You can revert just the files the task changed. Parallel mode splits larger changes across git worktrees and verifies the merged result. Also included: permission presets and budgets per chat, multi-key provider pools with automatic failover (`NVIDIA_NIM_API_KEYS="a=key1,b=key2"`), an encrypted credential vault (`fcc-secret`, `KEY=vault:<name>`), and Admin views for endpoint health, usage, secrets, and a tamper-evident audit log. See [docs/workbench.md](docs/workbench.md), including its known limitations.
 
 ## Choose A Provider
 

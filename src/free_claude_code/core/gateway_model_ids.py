@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Gateway-safe model ID encoding shared by API and CLI adapters."""
 
 from dataclasses import dataclass

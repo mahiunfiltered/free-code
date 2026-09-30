@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared JSON value vocabulary for wire and persistence boundaries."""
 
 from collections.abc import Mapping, Sequence

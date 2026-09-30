@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Responses stream error mapping."""
 
 from collections.abc import Mapping

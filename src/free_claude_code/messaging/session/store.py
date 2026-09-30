@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Persistent messaging conversation state store."""
 
 import threading

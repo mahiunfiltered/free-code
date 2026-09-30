@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """NVIDIA NIM tool schema sanitization and private argument aliases."""
 
 from typing import Any

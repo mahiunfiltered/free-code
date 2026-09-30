@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Process-local Aider configuration for FCC model routing."""
 
 import re

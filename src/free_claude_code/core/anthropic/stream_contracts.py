@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Neutral SSE parsing and Anthropic stream shape assertions.
 
 Used by default CI contract tests and by opt-in live smoke scenarios.

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Pure Anthropic continuation and tool-repair transformations."""
 
 import json

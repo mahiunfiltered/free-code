@@ -16,3 +16,7 @@ llama_cache
 .smoke-results
 /test-results/
 .vscode
+.fcc-bench/
+
+# Accidentally committed Python 3.11 virtualenv; the project uses .venv
+venv/

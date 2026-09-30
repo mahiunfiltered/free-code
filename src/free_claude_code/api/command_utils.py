@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Command parsing utilities for API optimizations."""
 
 import re

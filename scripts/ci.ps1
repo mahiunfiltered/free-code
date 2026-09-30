@@ -129,13 +129,13 @@ function Test-SelectedChecksNeedUv {
 function Invoke-SuppressionsCheck {
     Write-Step "Ban suppressions and legacy annotations"
     $pattern = '# type: ignore|# ty: ignore|from __future__ import annotations'
-    Write-Host "+ Get-ChildItem -Recurse -Filter *.py (excluding .venv, .git) | Select-String '$pattern'"
+    Write-Host "+ Get-ChildItem -Recurse -Filter *.py (excluding .venv, venv, .git) | Select-String '$pattern'"
 
     if (-not $DryRun) {
         $matches = Get-ChildItem -Path . -Recurse -Filter *.py -File |
             Where-Object {
                 $full = $_.FullName
-                $full -notmatch '[\\/]\.venv[\\/]' -and
+                $full -notmatch '[\\/]\.?venv[\\/]' -and
                     $full -notmatch '[\\/]\.git[\\/]'
             } |
             Select-String -Pattern $pattern

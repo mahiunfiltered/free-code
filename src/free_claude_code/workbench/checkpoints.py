@@ -6,6 +6,7 @@ Public API:
     changed_files_since(checkpoint) -> list[str]
     revert_task(checkpoint, files=None) -> list[str]
     drop_checkpoint(checkpoint) -> None
+    project_status(cwd) -> {"git", "branch", "dirty"}
     Checkpoint.to_json() / Checkpoint.from_json(obj)
 
 A checkpoint snapshots the whole working tree (tracked edits, staged edits and untracked
@@ -230,3 +231,22 @@ def drop_checkpoint(cp: Checkpoint) -> None:
 
     root, _ = _require(cp)
     git(root, "update-ref", "-d", REF_PREFIX + cp.id)
+
+
+def project_status(cwd: str | Path) -> JsonObject:
+    """``{"git", "branch", "dirty"}`` for the chat UI's Verified/Parallel preflight.
+
+    ``branch`` is None on a detached HEAD; ``dirty`` counts untracked files (as the
+    Parallel precondition does).
+    """
+
+    try:
+        root = git(cwd, "rev-parse", "--show-toplevel").strip()
+    except subprocess.CalledProcessError, FileNotFoundError, NotADirectoryError:
+        return {"git": False, "branch": None, "dirty": False}
+    try:
+        branch: str | None = git(root, "symbolic-ref", "--short", "-q", "HEAD").strip()
+    except subprocess.CalledProcessError:
+        branch = None
+    dirty = git(root, "status", "--porcelain", "--untracked-files=all").strip()
+    return {"git": True, "branch": branch or None, "dirty": bool(dirty)}

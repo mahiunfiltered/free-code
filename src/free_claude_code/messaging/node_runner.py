@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Run queued messaging nodes through a managed CLI session."""
 
 import asyncio

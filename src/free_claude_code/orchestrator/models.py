@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Data models for parallel agent task orchestration."""
 
 import time
@@ -34,11 +32,11 @@ class DependencyKind(StrEnum):
 
 
 class TaskComplexity(StrEnum):
-    TRIVIAL = "TRIVIAL"      # Single agent, minimal context/tools
-    SMALL = "SMALL"          # 1-2 workers, fast path
-    MEDIUM = "MEDIUM"        # Parallel specialized agents
-    LARGE = "LARGE"          # Full DAG orchestration
-    ENTERPRISE = "ENTERPRISE"# Multi-stage parallel DAG with validation stages
+    TRIVIAL = "TRIVIAL"  # Single agent, minimal context/tools
+    SMALL = "SMALL"  # 1-2 workers, fast path
+    MEDIUM = "MEDIUM"  # Parallel specialized agents
+    LARGE = "LARGE"  # Full DAG orchestration
+    ENTERPRISE = "ENTERPRISE"  # Multi-stage parallel DAG with validation stages
 
 
 class AgentRole(StrEnum):

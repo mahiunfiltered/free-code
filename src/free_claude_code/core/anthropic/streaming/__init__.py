@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared Anthropic streaming engine."""
 
 from .emitter import (

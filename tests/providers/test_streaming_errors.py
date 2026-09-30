@@ -1185,7 +1185,7 @@ class TestStreamingExceptionHandling:
         provider = _make_provider()
         request = _make_request()
         first_stream = AsyncStreamMock(
-            [_make_chunk(content="hidden")],
+            [_make_chunk()],
             error=httpx.ReadError("early cutoff"),
         )
         second_stream = AsyncStreamMock(
@@ -1222,12 +1222,42 @@ class TestStreamingExceptionHandling:
         assert parsed[-1].event == "message_stop"
 
     @pytest.mark.asyncio
+    async def test_first_output_delta_is_flushed_before_upstream_continues(self):
+        """Time-to-first-token: the first delta must not wait for later chunks."""
+        provider = _make_provider()
+        request = _make_request()
+        release = asyncio.Event()
+
+        async def slow_stream():
+            yield _make_chunk(content="first")
+            await release.wait()
+            yield _make_chunk(finish_reason="stop")
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=slow_stream(),
+        ):
+            stream = provider.stream_messages(request)
+            seen: list[str] = []
+            async with asyncio.timeout(2):
+                while not any("content_block_delta" in event for event in seen):
+                    seen.append(await anext(stream))
+            assert not release.is_set()
+            assert '"first"' in seen[-1]
+            release.set()
+            seen.extend([event async for event in stream])
+
+        assert seen[-1].startswith("event: message_stop")
+
+    @pytest.mark.asyncio
     async def test_responses_precommit_retry_emits_one_unduplicated_lifecycle(self):
         """Responses output also discards every frame from an abandoned attempt."""
         provider = _make_provider()
         request = OpenAIResponsesRequest(model="test-model", input="hello")
         first_stream = AsyncStreamMock(
-            [_make_chunk(content="hidden")],
+            [_make_chunk()],
             error=httpx.ReadError("early cutoff"),
         )
         second_stream = AsyncStreamMock(
@@ -1352,7 +1382,7 @@ class TestStreamingExceptionHandling:
             body={"error": {"message": "stream_options is unsupported"}},
         )
         first_stream = AsyncStreamMock(
-            [_make_chunk(content="hidden")],
+            [_make_chunk()],
             error=httpx.ReadError("early cutoff"),
         )
         second_stream = AsyncStreamMock(
@@ -1450,8 +1480,11 @@ class TestStreamingExceptionHandling:
         """Four replays plus continuation emit one unduplicated response."""
         provider = _make_provider()
         request = _make_request()
+        # Three pre-output cutoffs replay invisibly; the fourth commits "hello"
+        # (first output delta) and is then continued.
         primary_streams = [
-            AsyncStreamMock([_make_chunk(content="hello")]) for _ in range(4)
+            *(AsyncStreamMock([_make_chunk()]) for _ in range(3)),
+            AsyncStreamMock([_make_chunk(content="hello")]),
         ]
         continuation = AsyncStreamMock(
             [

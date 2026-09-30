@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Application-owned model metadata."""
 
 from dataclasses import dataclass
