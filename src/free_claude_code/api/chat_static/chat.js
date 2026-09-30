@@ -1030,6 +1030,7 @@ async function loadModels() {
           .filter((m) => typeof m?.value === "string" && m.value)
           .map((m) => modelEntry(m.value, String(m.label || m.value), m.provider, m.default || m.value === data.default));
         state.modelsFromApi = true;
+        $("setupCard").hidden = state.models.length > 0;
         renderControls();
         return;
       }
@@ -1379,7 +1380,7 @@ async function setModel(model) {
   renderControls();
   if (!state.liveId || state.exited) return;
   try {
-    await api(`/chat/api/live/${state.liveId}/control`, { method: "POST", body: { request: { subtype: "set_model", model: model || "default" } } });
+    await api(`/chat/api/live/${state.liveId}/control`, { method: "POST", body: { request: { subtype: "set_model", model: model || defaultModel()?.value || "default" } } });
     status(`Model: ${findModel(model)?.label || model || defaultModel()?.label || "server default"}`);
   } catch (err) {
     status(err.message, true);
@@ -3108,6 +3109,9 @@ function wire() {
       loadModels().then(() => { if (!$("modelMenu").hidden) renderModelMenu(); });
     }
   };
+  $("setupBtn").onclick = () => window.open("/admin", "_blank", "noopener");
+  // Returning from model setup: refresh so the setup card disappears once a key is saved.
+  window.addEventListener("focus", () => { if (!$("setupCard").hidden) loadModels(); });
   $("modelSearch").oninput = renderModelMenu;
   $("modelSearch").onkeydown = (e) => {
     if (e.key === "Enter") $("modelList").querySelector(".menu-item")?.click();

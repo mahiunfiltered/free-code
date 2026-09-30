@@ -181,11 +181,21 @@ async def delete(session_id: str, chat: ChatRuntimePort = Depends(_chat)):
 
 
 @router.post("/chat/api/live")
-async def start(payload: StartPayload, chat: ChatRuntimePort = Depends(_chat)):
+async def start(
+    payload: StartPayload,
+    chat: ChatRuntimePort = Depends(_chat),
+    services: ApiServices = Depends(get_services),
+):
+    # "Default" must mean FCC's MODEL; without --model, Claude Code would use
+    # the model from the user's own ~/.claude/settings.json instead.
+    default_model = build_chat_models_response(
+        services.requests.current_settings(), services.requests
+    )["default"]
     session = await chat.start(
         cwd=payload.cwd,
         permission_mode=payload.permission_mode or None,
-        model=payload.model or None,
+        model=payload.model
+        or (default_model if isinstance(default_model, str) else None),
         resume_session_id=payload.resume_session_id or None,
         policy_preset=payload.policy_preset,
         budget=payload.budget.model_dump() if payload.budget else None,

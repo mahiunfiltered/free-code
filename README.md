@@ -23,6 +23,16 @@
   <em>Independent open-source project. Not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.</em>
 </p>
 
+## Windows: One-Click Desktop App
+
+1. Download this repo: **Code → Download ZIP**, then extract it (or `git clone` it).
+2. Double-click **`Start-All.bat`**.
+   - The first run installs everything it needs: [uv](https://docs.astral.sh/uv/) (with Python 3.14 and packages), [Claude Code](https://code.claude.com/docs/en/overview), and Git if it is missing. This takes 1–3 minutes. Later runs start in seconds.
+3. The **Providers** setup page opens. Next to **NVIDIA NIM**, click **Configure**, paste a free key from [build.nvidia.com](https://build.nvidia.com/settings/api-keys), then click **Apply**.
+4. Go back to the **Claude** chat window. Your models appear in the model picker, and you can start chatting in any folder.
+
+The first run fills in the starter models: Nemotron 3 Ultra (the default), Nemotron 3 Nano, DeepSeek V4.1 Flash, Kimi K3, and GLM 5.3. To use another provider, add its key the same way; only models from providers that have a key appear in the picker. Double-click **`Stop-All.bat`** to shut everything down. Your settings and keys stay on your PC in `%USERPROFILE%\.fcc` and are never uploaded.
+
 ## What You Get
 
 - **50 ToS-friendly providers. 1.3B+ free tokens every month.** Use free, paid, subscription, and local models from one searchable UI without putting your account at risk. FCC follows provider terms and removes integrations if they stop being allowed.

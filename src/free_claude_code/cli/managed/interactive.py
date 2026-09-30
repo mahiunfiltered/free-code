@@ -124,6 +124,11 @@ def build_interactive_claude_argv(
         permission_mode,
         # Lets the UI switch into bypassPermissions later; it does not enable it.
         "--allow-dangerously-skip-permissions",
+        # Skip ~/.claude/settings.json: a personal CLI setup (plugins, hooks, a
+        # pinned model) nearly doubles the prompt and overrides the picked model.
+        # Project and local settings still apply; --settings adds FCC policy.
+        "--setting-sources",
+        "project,local",
     ]
     if model:
         argv += ["--model", model]

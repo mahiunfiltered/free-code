@@ -1,5 +1,7 @@
 # Free Claude Code - open the chat UI as a standalone desktop-style app window.
 # Starts the FCC server hidden if needed; no console window stays visible.
+# -Page admin opens the model setup page instead of the chat.
+param([string]$Page = "chat")
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -15,6 +17,7 @@ if (Test-Path $envFile) {
     if ($match) { $port = [int]$match.Matches[0].Groups[1].Value }
 }
 $chatUrl = "http://127.0.0.1:$port/chat"
+$pageUrl = "http://127.0.0.1:$port/$Page"
 
 function Test-Chat {
     try {
@@ -48,7 +51,7 @@ $browser = @(
 
 if ($browser) {
     $profileDir = Join-Path $fccDir "chat-window"
-    Start-Process -FilePath $browser -ArgumentList "--app=$chatUrl", "--user-data-dir=`"$profileDir`"", "--no-first-run", "--no-default-browser-check"
+    Start-Process -FilePath $browser -ArgumentList "--app=$pageUrl", "--user-data-dir=`"$profileDir`"", "--no-first-run", "--no-default-browser-check"
 } else {
-    Start-Process $chatUrl
+    Start-Process $pageUrl
 }

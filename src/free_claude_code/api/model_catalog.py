@@ -12,6 +12,10 @@ from free_claude_code.config.model_refs import (
     chat_picker_model_refs,
     configured_chat_model_refs,
 )
+from free_claude_code.config.provider_catalog import (
+    PROVIDER_CATALOG,
+    ProviderAuthKind,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
     gateway_model_id,
@@ -131,10 +135,16 @@ def build_models_list_response(
 def build_chat_models_response(
     settings: Settings, runtime: RequestRuntimePort
 ) -> JsonObject:
-    """Return the chat UI model picker: configured refs as Claude Code gateway ids."""
+    """Return the chat UI model picker: connected refs as Claude Code gateway ids.
+
+    Refs whose provider still lacks its API key are left out, so a fresh install
+    shows the chat's "Connect a model" screen instead of models that can only fail.
+    """
     models: list[JsonValue] = []
     default: str | None = None
     for ref in chat_picker_model_refs(settings):
+        if not provider_has_credentials(settings, ref.provider_id):
+            continue
         supports_thinking = runtime.cached_model_supports_thinking(
             ref.provider_id, ref.model_id
         )
@@ -155,6 +165,24 @@ def build_chat_models_response(
             }
         )
     return {"models": models, "default": default}
+
+
+def provider_has_credentials(settings: Settings, provider_id: str) -> bool:
+    """Return False only for a key-based provider with no key or key pool set."""
+    descriptor = PROVIDER_CATALOG.get(provider_id)
+    if (
+        descriptor is None
+        or descriptor.local
+        or descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT
+        or descriptor.credential_attr is None
+        or descriptor.static_credential is not None
+    ):
+        return True
+    return any(
+        getattr(settings, attr, None)
+        for attr in (descriptor.credential_attr, descriptor.credential_pool_attr)
+        if attr is not None
+    )
 
 
 def _build_claude_models_response(

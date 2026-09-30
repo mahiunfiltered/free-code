@@ -156,6 +156,8 @@ def test_models_lists_only_configured_refs_as_gateway_ids(
         model_sonnet="nvidia_nim/nvidia/nemotron",
         model_fallbacks=("groq/vendor/fallback",),
         chat_models=("nvidia_nim/moonshotai/kimi", "nvidia_nim/z-ai/glm"),
+        nvidia_nim_api_key="nvapi-test",
+        groq_api_keys="a=gsk-test",
     )
     app = create_test_app(settings)
     no_thinking = {("nvidia_nim", "z-ai/glm")}
@@ -203,11 +205,27 @@ def test_models_lists_only_configured_refs_as_gateway_ids(
     }
 
 
-def test_models_default_only_model(client: TestClient):
+def test_models_default_only_model():
+    app = create_test_app(Settings(nvidia_nim_api_key="nvapi-test"))
+    client = TestClient(app, client=("127.0.0.1", 50000), base_url=LOCAL)
     body = client.get("/chat/api/models").json()
     assert [model["default"] for model in body["models"]] == [True]
     assert body["default"] == body["models"][0]["value"]
     assert body["default"].startswith("anthropic/")
+
+
+def test_models_hide_providers_without_keys():
+    settings = Settings(
+        model="nvidia_nim/nvidia/nemotron",
+        chat_models=("groq/vendor/fast", "ollama/llama3"),
+    )
+    client = TestClient(
+        create_test_app(settings), client=("127.0.0.1", 50000), base_url=LOCAL
+    )
+    body = client.get("/chat/api/models").json()
+    # Key-based providers without a key are hidden; local providers need none.
+    assert [model["label"] for model in body["models"]] == ["ollama/llama3"]
+    assert body["default"] is None
 
 
 def test_dirs_lists_visible_subfolders_sorted(client: TestClient, tmp_path: Path):
@@ -340,6 +358,28 @@ def test_start_rejects_bad_preset_and_budget(client: TestClient, tmp_path: Path)
         "/chat/api/live", json={"cwd": str(tmp_path), "budget": {"max_turns": 0}}
     )
     assert budget.status_code == 422
+
+
+def test_start_without_model_uses_fcc_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without an explicit --model, Claude Code would pick the model pinned in the
+    # user's own ~/.claude/settings.json instead of FCC's MODEL.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    fake = fake_claude(tmp_path)
+    monkeypatch.setattr(interactive.shutil, "which", lambda _name: fake)
+    settings = Settings(port=1, model="ollama/pick")
+    with TestClient(
+        create_test_app(settings), client=("127.0.0.1", 50000), base_url=LOCAL
+    ) as client:
+        started = client.post("/chat/api/live", json={"cwd": str(tmp_path)}).json()
+        chosen = client.post(
+            "/chat/api/live", json={"cwd": str(tmp_path), "model": "anthropic/x/y"}
+        ).json()
+        for live in (started, chosen):
+            client.delete(f"/chat/api/live/{live['live_id']}")
+    assert started["model"] == "anthropic/ollama/pick"
+    assert chosen["model"] == "anthropic/x/y"
 
 
 def test_verified_task_over_http(

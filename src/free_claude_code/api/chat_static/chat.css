@@ -213,6 +213,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .main.is-empty .disclaimer { visibility: hidden; }
 .empty h2 { font-family: var(--font-prose); font-weight: 400; font-size: 34px; letter-spacing: -0.02em; margin: 0 0 6px; }
 .empty-sub { color: var(--muted); margin: 0; }
+.setup-card { margin: 28px auto 0; max-width: 420px; padding: 18px 20px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); text-align: left; }
+.setup-card[hidden] { display: none; }
+.setup-card p { color: var(--muted); margin: 6px 0 14px; }
 
 /* ---------- messages ---------- */
 .msg-user { display: flex; justify-content: flex-end; margin: 22px 0 10px; }

@@ -68,6 +68,8 @@ def test_argv_carries_protocol_flags_model_and_resume():
     assert argv[argv.index("--permission-mode") + 1] == "plan"
     assert argv[argv.index("--model") + 1] == "m1"
     assert argv[argv.index("--resume") + 1] == "abc"
+    # User-level ~/.claude settings (plugins, hooks, pinned model) stay out.
+    assert argv[argv.index("--setting-sources") + 1] == "project,local"
     bare = build_interactive_claude_argv(
         claude_bin="claude",
         permission_mode="default",
