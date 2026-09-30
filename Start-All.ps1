@@ -1,7 +1,7 @@
-# Free Claude Code - start every local server, then open the Claude-style app window.
+# FreeCode - start every local server, then open the FreeCode app window.
 #   1. Ollama            (local models, port 11434)       - if installed
 #   2. NVIDIA proxy      (~/.nvidia-proxy/proxy.py, 8787) - if present
-#   3. FCC server + chat window (via Claude-Desktop.ps1, port from ~/.fcc/.env, default 8082)
+#   3. FCC server + chat window (via FreeCode.ps1, port from ~/.fcc/.env, default 8082)
 # Servers already running are left alone. Double-click Start-All.bat to run this.
 $ErrorActionPreference = "Stop"
 
@@ -19,7 +19,7 @@ function Write-Status([string]$Name, [string]$State, [string]$Color) {
 }
 
 Write-Host ""
-Write-Host "  Starting Claude (Free Claude Code)" -ForegroundColor Cyan
+Write-Host "  Starting FreeCode" -ForegroundColor Cyan
 Write-Host "  ----------------------------------" -ForegroundColor Cyan
 
 # 0. Check every dependency: install what is missing, skip what is already present.
@@ -95,7 +95,7 @@ if (Test-Path $starterEnv) {
     $ultra = "nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b"
     $flash = "nvidia_nim/deepseek-ai/deepseek-v4.1-flash"
     $starter = @(
-        "# Managed by Free Claude Code.",
+        "# Managed by FreeCode.",
         "# Edit settings in /admin when possible.",
         "FCC_CONFIG_SCHEMA=1",
         "MODEL=`"$nano`"",
@@ -145,14 +145,14 @@ if (-not (Test-Path $proxyScript)) {
 }
 
 # 3. FCC server + app window (starts the server hidden and waits until /chat answers)
-Write-Status "FCC server + Claude" "starting..." Cyan
-& (Join-Path $scriptDir "Claude-Desktop.ps1")
+Write-Status "FCC server + FreeCode" "starting..." Cyan
+& (Join-Path $scriptDir "FreeCode.ps1")
 if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-    Write-Status "FCC server + Claude" "failed - see ~\.fcc\logs\server.log" Red
+    Write-Status "FCC server + FreeCode" "failed - see ~\.fcc\logs\server.log" Red
     Start-Sleep -Seconds 8
     exit 1
 }
-Write-Status "FCC server + Claude" "running - window opened" Green
+Write-Status "FCC server + FreeCode" "running - window opened" Green
 $port = 8082
 $envFile = Join-Path $env:USERPROFILE ".fcc\.env"
 if (Test-Path $envFile) {
@@ -164,7 +164,7 @@ try {
 } catch { $connected = 1 }
 if ($connected -eq 0) {
     # No model has an API key yet: open the setup page on top of the chat window.
-    & (Join-Path $scriptDir "Claude-Desktop.ps1") -Page admin
+    & (Join-Path $scriptDir "FreeCode.ps1") -Page admin
     Write-Status "Model setup" "add your API key in the window that opened" Yellow
 }
 Write-Host ""

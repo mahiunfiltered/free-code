@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from free_claude_code.config.paths import config_dir_path
 from free_claude_code.core.json_types import JsonObject, JsonValue
 
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -35,11 +36,20 @@ class TranscriptSummary:
         }
 
 
+def claude_config_dir() -> Path:
+    """Return the Claude config dir the chat app spawns with and reads from.
+
+    An explicit CLAUDE_CONFIG_DIR in the server environment wins; otherwise the
+    app uses ~/.fcc/claude so its history and memory never mix with the user's
+    own Claude Code home.
+    """
+
+    explicit = os.environ.get("CLAUDE_CONFIG_DIR")
+    return Path(explicit) if explicit else config_dir_path() / "claude"
+
+
 def claude_projects_dir() -> Path:
-    config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
-        os.path.expanduser("~"), ".claude"
-    )
-    return Path(config_dir) / "projects"
+    return claude_config_dir() / "projects"
 
 
 def is_valid_session_id(session_id: str) -> bool:

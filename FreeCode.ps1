@@ -1,4 +1,4 @@
-# Free Claude Code - open the chat UI as a standalone desktop-style app window.
+# FreeCode - open the chat UI as a standalone desktop-style app window.
 # Starts the FCC server hidden if needed; no console window stays visible.
 # -Page admin opens the model setup page instead of the chat.
 param([string]$Page = "chat")
@@ -33,8 +33,8 @@ if (-not (Test-Chat)) {
         if ((Get-Date) -gt $deadline) {
             Add-Type -AssemblyName System.Windows.Forms
             [System.Windows.Forms.MessageBox]::Show(
-                "Free Claude Code server did not start in time.`nSee $fccDir\logs\server.log",
-                "Claude") | Out-Null
+                "FreeCode server did not start in time.`nSee $fccDir\logs\server.log",
+                "FreeCode") | Out-Null
             exit 1
         }
         Start-Sleep -Milliseconds 500

@@ -133,7 +133,7 @@ def test_verified_mode_warns_outside_git(page: Page, admin_base_url: str) -> Non
     _open(
         page,
         admin_base_url,
-        storage={"fcc.runMode": "verified"},
+        storage={"fcc.runModeV2": "verified"},
         project={"git": False, "branch": None, "dirty": False},
     )
 
@@ -150,7 +150,7 @@ def test_parallel_mode_blocks_send_on_a_dirty_tree(
     _open(
         page,
         admin_base_url,
-        storage={"fcc.runMode": "parallel"},
+        storage={"fcc.runModeV2": "parallel"},
         project={"git": True, "branch": "main", "dirty": True},
     )
     page.route(re.compile(r"/chat/api/live/L1/messages"), lambda r, q: sent.append(q))
@@ -301,11 +301,9 @@ def _send(page: Page, sent: list[dict[str, object]], text: str) -> None:
     expect(page.locator(".task-card.ultra-card")).to_be_visible()
 
 
-def test_ultra_is_the_default_and_sends_its_settings(
-    page: Page, admin_base_url: str
-) -> None:
+def test_ultra_sends_its_settings(page: Page, admin_base_url: str) -> None:
     sent: list[dict[str, object]] = []
-    _open(page, admin_base_url, storage={})
+    _open(page, admin_base_url, storage={"fcc.runModeV2": "ultra"})
     expect(page.locator("#runModeBtn")).to_have_text("Ultra")
     expect(page.locator("#projectWarning")).to_be_hidden()
 
@@ -341,7 +339,7 @@ def test_plan_countdown_lanes_report_and_completion(
     page: Page, admin_base_url: str
 ) -> None:
     sent: list[dict[str, object]] = []
-    _open(page, admin_base_url, storage={})
+    _open(page, admin_base_url, storage={"fcc.runModeV2": "ultra"})
     _send(page, sent, "Create two modules")
     now = time.time()
     _inject(
@@ -479,7 +477,7 @@ def test_stop_cancels_the_ultra_task_and_node_prompts_still_work(
     cancelled: list[str] = []
     answers: list[str] = []
     sent: list[dict[str, object]] = []
-    _open(page, admin_base_url, storage={})
+    _open(page, admin_base_url, storage={"fcc.runModeV2": "ultra"})
     page.route(
         "**/chat/api/tasks/U1/cancel",
         lambda route, request: (

@@ -713,3 +713,53 @@ def test_plan_approval_mode_switch_is_clamped_to_the_preset():
         "updatedPermissions": [{"type": "setMode", "mode": "plan"}],
     }
     assert session("acceptEdits")._clamp_mode_updates(stricter) == stricter
+
+
+def test_claude_config_dir_env_override_else_app_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    assert transcripts.claude_config_dir() == tmp_path / ".fcc" / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "custom"))
+    assert transcripts.claude_config_dir() == tmp_path / "custom"
+    assert transcripts.claude_projects_dir() == tmp_path / "custom" / "projects"
+
+
+def test_real_claude_home_transcripts_are_not_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    entry: list[dict | str] = [{"type": "user", "message": {"content": "prompt"}}]
+    _write_jsonl(
+        tmp_path / ".claude" / "projects" / "p" / "real-session-1.jsonl", entry
+    )
+    assert transcripts.list_transcripts() == []
+    _write_jsonl(
+        tmp_path / ".fcc" / "claude" / "projects" / "p" / "app-session-1.jsonl", entry
+    )
+    assert [t.session_id for t in transcripts.list_transcripts()] == ["app-session-1"]
+    assert transcripts.find_transcript("real-session-1") is None
+
+
+@pytest.mark.asyncio
+async def test_spawn_env_uses_app_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    real_spawn = asyncio.create_subprocess_exec
+    seen: list[dict[str, str]] = []
+
+    async def spy(*args, **kwargs):
+        seen.append(kwargs["env"])
+        return await real_spawn(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy)
+    registry = _registry(tmp_path)
+    await registry.start(cwd=str(tmp_path))
+    await registry.stop_all()
+    app_dir = tmp_path / ".fcc" / "claude"
+    assert app_dir.is_dir()
+    assert seen[0]["CLAUDE_CONFIG_DIR"] == str(app_dir)

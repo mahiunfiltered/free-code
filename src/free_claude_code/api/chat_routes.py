@@ -39,7 +39,7 @@ router = APIRouter(
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "chat_static"
-_ASSETS = frozenset({"chat.css", "chat.js"})
+_ASSETS = frozenset({"chat.css", "chat.js", "freecode-logo.svg"})
 # Control requests the UI may forward; everything else stays owned by the server.
 _UI_CONTROL_SUBTYPES = frozenset(
     {

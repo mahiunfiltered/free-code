@@ -16,15 +16,15 @@
   --line-strong: rgba(255, 255, 255, 0.12);
   
   /* Brand and Accent Colors */
-  --accent: #10b981;
-  --accent-dark: #059669;
-  --accent-muted: rgba(16, 185, 129, 0.08);
-  --accent-border: rgba(16, 185, 129, 0.3);
+  --accent: #14b8a6;
+  --accent-dark: #0f766e;
+  --accent-muted: rgba(20, 184, 166, 0.08);
+  --accent-border: rgba(20, 184, 166, 0.3);
   
   /* Status Colors */
-  --ok: #10b981;
-  --ok-bg: rgba(16, 185, 129, 0.08);
-  --ok-border: rgba(16, 185, 129, 0.25);
+  --ok: #14b8a6;
+  --ok-bg: rgba(20, 184, 166, 0.08);
+  --ok-border: rgba(20, 184, 166, 0.25);
   
   --warn: #f59e0b;
   --warn-bg: rgba(245, 158, 11, 0.08);
@@ -45,7 +45,7 @@
   /* Box Shadow & Glows */
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
   --shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
-  --glow-accent: 0 0 12px rgba(16, 185, 129, 0.15);
+  --glow-accent: 0 0 12px rgba(20, 184, 166, 0.15);
   
   /* Borders and Radius */
   --radius-sm: 6px;
@@ -134,10 +134,6 @@ textarea {
   height: 40px;
   place-items: center;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-  color: #ffffff;
-  font-weight: 800;
-  font-size: 15px;
   box-shadow: var(--glow-accent);
 }
 
@@ -673,7 +669,7 @@ textarea:focus-visible,
 .field textarea:focus {
   border-color: var(--accent);
   background: var(--input-focus);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.15);
   outline: none;
 }
 

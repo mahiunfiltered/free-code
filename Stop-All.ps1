@@ -1,5 +1,5 @@
-# Free Claude Code - stop everything Start-All.ps1 starts:
-#   Claude app window, live Claude Code chat processes, FCC server, NVIDIA proxy, Ollama.
+# FreeCode - stop everything Start-All.ps1 starts:
+#   FreeCode app window, live Claude Code chat processes, FCC server, NVIDIA proxy, Ollama.
 $ErrorActionPreference = "SilentlyContinue"
 
 function Write-Status([string]$Name, [string]$State, [string]$Color) {
@@ -29,15 +29,15 @@ function Stop-PortOwner([string]$Name, [int]$Port, [string]$Expect = "") {
 }
 
 Write-Host ""
-Write-Host "  Stopping Claude (Free Claude Code)" -ForegroundColor Cyan
+Write-Host "  Stopping FreeCode" -ForegroundColor Cyan
 Write-Host "  ----------------------------------" -ForegroundColor Cyan
 
-# Claude app window: only browser processes using the dedicated chat-window profile.
+# FreeCode app window: only browser processes using the dedicated chat-window profile.
 $profileDir = Join-Path $env:USERPROFILE ".fcc\chat-window"
 $window = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" |
     Where-Object { $_.CommandLine -like "*$profileDir*" } | Select-Object -ExpandProperty ProcessId)
-if ($window.Count) { Stop-Tree $window; Write-Status "Claude window" "closed" Green }
-else { Write-Status "Claude window" "not open" DarkGray }
+if ($window.Count) { Stop-Tree $window; Write-Status "FreeCode window" "closed" Green }
+else { Write-Status "FreeCode window" "not open" DarkGray }
 
 # FCC server (port from ~/.fcc/.env, default 8082), plus any stray fcc processes.
 $port = 8082

@@ -3,11 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Claude Code</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23d97757' d='M12 1.5l1.6 7.2 6.3-3.9-3.9 6.3 7.2 1.6-7.2 1.6 3.9 6.3-6.3-3.9L12 23.9l-1.6-7.2-6.3 3.9 3.9-6.3L.8 12.7l7.2-1.6-3.9-6.3 6.3 3.9z'/%3E%3C/svg%3E"
-    />
+    <title>FreeCode</title>
+    <link rel="icon" type="image/svg+xml" href="/chat/assets/freecode-logo.svg" />
     <link rel="stylesheet" href="/chat/assets/chat.css" />
     <script src="/chat/assets/chat.js" defer></script>
   </head>
@@ -17,7 +14,7 @@
         <div class="sidebar-top">
           <div class="brand">
             <span class="spark" aria-hidden="true"></span>
-            <span>Claude Code</span>
+            <span>FreeCode</span>
           </div>
           <button class="icon-btn" id="collapseSidebar" title="Close sidebar" aria-label="Close sidebar">
             <svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2" /><path d="M8 4v12" /></svg>
@@ -72,7 +69,7 @@
           <div class="empty" id="empty">
             <div class="spark big" aria-hidden="true"></div>
             <h2 id="greeting">Good evening</h2>
-            <p class="empty-sub">Claude Code with your own models, in any folder.</p>
+            <p class="empty-sub">FreeCode — your own models, any folder.</p>
             <div class="setup-card" id="setupCard" hidden>
               <strong>Connect a model to get started</strong>
               <p>Add an API key (for example a free NVIDIA NIM key) and pick your models. This page updates when you come back.</p>
@@ -91,7 +88,7 @@
           <div class="composer" id="composer">
             <div class="slash-menu" id="slashMenu" role="listbox" hidden></div>
             <div class="attachments" id="attachments"></div>
-            <textarea id="input" rows="1" placeholder="Ask Claude to build, fix, or explain…" aria-label="Message"></textarea>
+            <textarea id="input" rows="1" placeholder="Ask FreeCode to build, fix, or explain…" aria-label="Message"></textarea>
             <div class="composer-bar">
               <div class="bar-left">
                 <button class="icon-btn" id="attachBtn" type="button" title="Attach images" aria-label="Attach images">
@@ -118,7 +115,7 @@
                     <label class="field">
                       <span>Policy preset</span>
                       <select id="policySelect">
-                        <option value="">None (Claude Code defaults)</option>
+                        <option value="">None (FreeCode defaults)</option>
                         <option value="restricted">Restricted</option>
                         <option value="workspace">Workspace</option>
                         <option value="privileged">Privileged</option>
@@ -165,7 +162,7 @@
               </div>
             </div>
           </div>
-          <p class="disclaimer" id="statusLine">Claude can make mistakes. Review changes before shipping.</p>
+          <p class="disclaimer" id="statusLine">FreeCode can make mistakes. Review changes before shipping.</p>
         </footer>
       </main>
 
@@ -195,7 +192,7 @@
     <dialog class="dialog folder-dialog" id="folderDialog" aria-labelledby="folderTitle">
       <form method="dialog" class="dialog-body" id="folderForm">
         <h3 id="folderTitle">Choose a folder</h3>
-        <p>Claude Code works inside this folder and can read and edit its files.</p>
+        <p>FreeCode works inside this folder and can read and edit its files.</p>
         <div class="recent-folders" id="recentFolders"></div>
         <div class="browser" id="folderBrowser" hidden>
           <div class="browser-bar">

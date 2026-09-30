@@ -1,6 +1,6 @@
 "use strict";
 
-/* Claude-desktop-style client for live Claude Code sessions served by FCC. */
+/* FreeCode chat client for live agent sessions served by FCC. */
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -58,8 +58,8 @@ const state = {
   source: null,
   skipReplay: false,
   attachments: [],
-  // Run mode for the next message: ultra (default) | normal | verified | parallel (+ parallel strategy).
-  runMode: store.get("fcc.runMode", "ultra"),
+  // Run mode for the next message: normal (Basic, default) | ultra | verified | parallel (+ parallel strategy).
+  runMode: store.get("fcc.runModeV2", "normal"),
   strategy: store.get("fcc.strategy", "balanced"),
   // Ultra: concurrent sub-agents (1-6) and whether to run the verification gate.
   ultraParallel: Math.min(6, Math.max(1, Math.floor(Number(store.get("fcc.ultraParallel", "4"))) || 4)),
@@ -557,7 +557,7 @@ function renderChanges() {
   const open = new Set([...list.querySelectorAll("details[open]")].map((d) => d.dataset.key));
   list.replaceChildren();
   if (!entries.length) {
-    list.append(el("div", "changes-empty", "Files Claude edits in this chat show up here."));
+    list.append(el("div", "changes-empty", "Files FreeCode edits in this chat show up here."));
     return;
   }
   for (const entry of entries) {
@@ -819,12 +819,12 @@ function buildToolPermissionCard(card, id, request) {
   const suggestions = request.permission_suggestions;
   if (Array.isArray(suggestions) && suggestions.length) {
     const always = el("button", "btn", "Always allow");
-    always.title = "Remember this permission as Claude Code suggests";
+    always.title = "Remember this permission as suggested";
     always.onclick = () => answer(id, { behavior: "allow", updatedInput: input, updatedPermissions: suggestions }, card, "always allowed");
     actions.append(always);
   }
   const feedback = el("input", "feedback");
-  feedback.placeholder = "Tell Claude what to do instead (optional)";
+  feedback.placeholder = "Tell FreeCode what to do instead (optional)";
   const deny = el("button", "btn danger", "Deny");
   deny.onclick = () => answer(id, { behavior: "deny", message: feedback.value.trim() || "The user denied this action." }, card, "denied");
   feedback.addEventListener("keydown", (e) => { if (e.key === "Enter") deny.click(); });
@@ -834,7 +834,7 @@ function buildToolPermissionCard(card, id, request) {
 
 function buildQuestionCard(card, id, input) {
   const questions = input.questions || [];
-  card.append(el("h4", "", "Claude has a question"));
+  card.append(el("h4", "", "FreeCode has a question"));
   const readers = [];
   questions.forEach((q, qi) => {
     const box = el("div", "question prompt-extra");
@@ -875,7 +875,7 @@ function buildQuestionCard(card, id, input) {
 }
 
 function buildPlanCard(card, id, input) {
-  card.append(el("h4", "", "Ready to code? Here is Claude's plan"));
+  card.append(el("h4", "", "Ready to code? Here is FreeCode's plan"));
   const plan = el("div", "plan prose prompt-extra");
   plan.innerHTML = markdown(input.plan || "");
   card.append(plan);
@@ -894,7 +894,7 @@ function buildPlanCard(card, id, input) {
     local("default");
   };
   const feedback = el("input", "feedback");
-  feedback.placeholder = "Tell Claude what to change";
+  feedback.placeholder = "Tell FreeCode what to change";
   const keep = el("button", "btn", "Keep planning");
   keep.onclick = () => answer(id, { behavior: "deny", message: feedback.value.trim() || "Keep planning; the user wants to refine the plan." }, card, "keep planning");
   actions.append(auto, manual, keep, feedback);
@@ -941,7 +941,7 @@ function handleEvent(event) {
     case "system": return handleSystem(event);
     case "fcc_exit":
       setWorking(false);
-      if (event.code) notice(`Claude Code exited (code ${event.code}).${event.stderr ? `\n${event.stderr}` : ""}`, "error");
+      if (event.code) notice(`Agent process exited (code ${event.code}).${event.stderr ? `\n${event.stderr}` : ""}`, "error");
       refreshSessions();
       return;
     case "fcc_raw": return;
@@ -1181,7 +1181,7 @@ function renderSessions() {
     box.type = "checkbox";
     box.checked = showAll;
     box.onchange = () => { store.set("fcc.showAll", box.checked ? "1" : "0"); renderSessions(); };
-    toggle.append(box, el("span", "", `Show all Claude Code sessions${hidden ? ` (${hidden})` : ""}`));
+    toggle.append(box, el("span", "", `Show all sessions${hidden ? ` (${hidden})` : ""}`));
     list.append(toggle);
   }
   markActiveSession();
@@ -1314,7 +1314,7 @@ function status(text, isError) {
   line.style.color = isError ? "var(--danger)" : "";
   clearTimeout(status.timer);
   status.timer = setTimeout(() => {
-    line.textContent = "Claude can make mistakes. Review changes before shipping.";
+    line.textContent = "FreeCode can make mistakes. Review changes before shipping.";
     line.style.color = "";
   }, isError ? 8000 : 3000);
 }
@@ -1322,7 +1322,7 @@ function status(text, isError) {
 function setTitle(title) {
   state.title = title || "New chat";
   $("chatTitle").textContent = state.title;
-  document.title = state.title === "New chat" ? "Claude Code" : `${state.title} — Claude Code`;
+  document.title = state.title === "New chat" ? "FreeCode" : `${state.title} — FreeCode`;
 }
 
 function renderControls() {
@@ -1714,8 +1714,8 @@ $("folderDialog").addEventListener("close", async () => {
 
 const RUN_MODES = {
   ultra: { label: "Ultra", hint: "A lead agent answers directly or splits the work across parallel sub-agents", placeholder: "Ask anything. Bigger tasks are split across parallel sub-agents…" },
-  normal: { label: "Chat", hint: "Plain conversation with Claude Code", placeholder: "Ask Claude to build, fix, or explain…" },
-  verified: { label: "Verified", hint: "Intent contract, verification gate, auto-recovery", placeholder: "Describe the change. Claude checks it against real evidence before calling it done…" },
+  normal: { label: "Basic", hint: "Plain conversation with FreeCode", placeholder: "Ask FreeCode to build, fix, or explain…" },
+  verified: { label: "Verified", hint: "Intent contract, verification gate, auto-recovery", placeholder: "Describe the change. FreeCode checks it against real evidence before calling it done…" },
   parallel: { label: "Parallel", hint: "Split into a task graph of parallel sessions, then verify", placeholder: "Describe a larger change to split across parallel sessions…" },
 };
 // Max concurrent nodes per strategy (workbench.orchestration.runner.PARALLELISM).
@@ -1735,7 +1735,7 @@ function renderRunMode() {
 
 function setRunMode(value) {
   state.runMode = value;
-  store.set("fcc.runMode", value);
+  store.set("fcc.runModeV2", value);
   renderRunMode();
   scheduleVerify();
   checkProject();
@@ -1874,7 +1874,7 @@ function renderSettings() {
   if (!presets.supported) {
     rules.append(el("p", "note", "This server has no policy presets yet. Your choice is saved and sent once it does."));
   } else if (!state.policy) {
-    rules.append(el("p", "note", "No FCC policy: Claude Code's own permission settings apply."));
+    rules.append(el("p", "note", "No FCC policy: the agent's own permission settings apply."));
   } else if (preset) {
     const mode = MODES.find((m) => m.value === preset.permission_mode);
     if (preset.permission_mode) rules.append(el("div", "rules-mode", `Permission mode: ${mode ? mode.label : preset.permission_mode}`));
@@ -1992,7 +1992,7 @@ function markInjection(toolId, signals) {
   note.setAttribute("role", "note");
   note.append(el("strong", "", label));
   if (list.length) note.append(el("div", "", `Signals: ${list.join(", ")}`));
-  note.append(el("div", "", "Claude was told to treat this output as data, not instructions."));
+  note.append(el("div", "", "The agent was told to treat this output as data, not instructions."));
   tool.body.prepend(note);
 }
 
@@ -2533,7 +2533,7 @@ function renderClarify(task) {
     return;
   }
   const id = `clarify-${task.id}`;
-  const title = el("h4", "", "Claude needs answers before locking the contract");
+  const title = el("h4", "", "FreeCode needs answers before locking the contract");
   title.id = `${id}-title`;
   const questions = el("ol", "clarify-questions");
   for (const q of intent.questions) questions.append(el("li", "", q));
@@ -2738,7 +2738,7 @@ function taskActions(task) {
   if (task.status === "RECOVERY_REQUIRED") {
     const retry = el("button", "btn small primary", "Try again");
     retry.type = "button";
-    retry.title = "Re-run verification, and if it still fails give Claude one more recovery attempt";
+    retry.title = "Re-run verification, and if it still fails give FreeCode one more recovery attempt";
     retry.disabled = !!task.resuming || state.busy;
     retry.onclick = () => resumeTask(task);
     row.prepend(retry);
@@ -2973,7 +2973,7 @@ function integrationNode(o) {
 }
 
 function wireTasks() {
-  if (!RUN_MODES[state.runMode]) state.runMode = "ultra";
+  if (!RUN_MODES[state.runMode]) state.runMode = "normal";
   if (!STRATEGIES[state.strategy]) state.strategy = "balanced";
   renderRunMode();
   $("runModeBtn").onclick = () => {

@@ -9,9 +9,9 @@
   --muted: #73726c;
   --border: rgba(31, 30, 29, 0.12);
   --border-strong: rgba(31, 30, 29, 0.22);
-  --accent: #c96442;
-  --accent-hover: #b5573a;
-  --accent-soft: rgba(201, 100, 66, 0.12);
+  --accent: #0f766e;
+  --accent-hover: #115e59;
+  --accent-soft: rgba(15, 118, 110, 0.12);
   --danger: #b53333;
   --danger-soft: rgba(181, 51, 51, 0.09);
   --ok: #3f7d3a;
@@ -41,9 +41,9 @@
     --muted: #a6a39b;
     --border: rgba(250, 249, 245, 0.1);
     --border-strong: rgba(250, 249, 245, 0.2);
-    --accent: #d97757;
-    --accent-hover: #e08a6d;
-    --accent-soft: rgba(217, 119, 87, 0.16);
+    --accent: #2dd4bf;
+    --accent-hover: #5eead4;
+    --accent-soft: rgba(45, 212, 191, 0.16);
     --danger: #e5877f;
     --danger-soft: rgba(229, 135, 127, 0.12);
     --ok: #8fc98a;
@@ -70,9 +70,9 @@
   --muted: #a6a39b;
   --border: rgba(250, 249, 245, 0.1);
   --border-strong: rgba(250, 249, 245, 0.2);
-  --accent: #d97757;
-  --accent-hover: #e08a6d;
-  --accent-soft: rgba(217, 119, 87, 0.16);
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-soft: rgba(45, 212, 191, 0.16);
   --danger: #e5877f;
   --danger-soft: rgba(229, 135, 127, 0.12);
   --ok: #8fc98a;
@@ -112,11 +112,11 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 6px 8px; }
 .brand { display: flex; align-items: center; gap: 8px; font-family: var(--font-prose); font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
 .spark {
-  width: 18px; height: 18px; background: var(--accent); flex: none;
-  clip-path: polygon(50% 0, 57% 36%, 85% 15%, 64% 43%, 100% 50%, 64% 57%, 85% 85%, 57% 64%, 50% 100%, 43% 64%, 15% 85%, 36% 57%, 0 50%, 36% 43%, 15% 15%, 43% 36%);
+  width: 18px; height: 18px; flex: none; border-radius: 5px;
+  background: url("/chat/assets/freecode-logo.svg") center / contain no-repeat;
 }
 .spark.big { width: 44px; height: 44px; margin: 0 auto 14px; }
-.spark.pulse { animation: spin 2.4s linear infinite; }
+.spark.pulse { animation: blink 1s ease-in-out infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .icon-btn {
@@ -706,10 +706,10 @@ summary.sec-title::before { content: "›"; display: inline-block; transition: t
 .field.check input { width: auto; margin: 0; }
 .budget-grid .field.check > span { font-weight: 400; }
 .spark.small { width: 14px; height: 14px; }
-.ultra-card[data-tone="run"] .spark.small { animation: spin 2.4s linear infinite; }
-.ultra-card[data-tone="ok"] .spark.small { background: var(--ok); }
-.ultra-card[data-tone="bad"] .spark.small { background: var(--danger); }
-.ultra-card[data-tone="muted"] .spark.small { background: var(--muted); }
+.ultra-card[data-tone="run"] .spark.small { animation: blink 1s ease-in-out infinite; }
+.ultra-card[data-tone="ok"] .spark.small { background: var(--ok); border-radius: 50%; }
+.ultra-card[data-tone="bad"] .spark.small { background: var(--danger); border-radius: 50%; }
+.ultra-card[data-tone="muted"] .spark.small { background: var(--muted); border-radius: 50%; }
 .ultra-card .task-line { display: grid; gap: 8px; color: var(--text); }
 .ultra-elapsed { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .ultra-stop { margin-left: auto; }

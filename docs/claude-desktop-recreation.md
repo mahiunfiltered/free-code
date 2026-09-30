@@ -1,4 +1,4 @@
-# Recreating a Claude-Desktop-style coding app on top of Claude Code
+# FreeCode: recreating a desktop-style coding app on top of Claude Code
 
 A teaching guide to the `/chat` app that ships with Free Claude Code (FCC). It
 shows how a desktop coding app, similar in spirit to the **Code** tab of the
@@ -581,22 +581,22 @@ with no `--model` flag, so FCC routes the request to `MODEL`.
 
 Pick one:
 
-- **Windows, from a repo checkout:** double-click `Claude-Desktop.bat`. It runs
-  `Claude-Desktop.ps1` hidden. The script reads `PORT` from `~/.fcc/.env`,
+- **Windows, from a repo checkout:** double-click `FreeCode.bat`. It runs
+  `FreeCode.ps1` hidden. The script reads `PORT` from `~/.fcc/.env`,
   starts `uv run fcc-server` if `/chat` is not already responding, waits up to
   60 s, and opens Edge or Chrome as an app window (`--app=http://127.0.0.1:<port>/chat`)
   with its own profile in `~/.fcc/chat-window`.
 - **Installed desktop shell (Windows/macOS):** run `fcc-desktop`, or open
   "Free Claude Code" from the Start menu or Applications. `cli/desktop.py`
   starts the server with a tray icon and calls `schedule_open_chat_window()`.
-  The tray's default item **Open Claude** reopens the window, and
+  The tray's default item **Open FreeCode** reopens the window, and
   **Providers & Models** opens Admin.
 - **Any OS:** run `fcc-server`, then browse to
   **http://127.0.0.1:8082/chat**.
 - **Windows, everything at once:** double-click `Start-All.bat` (repo root). It
   runs `Start-All.ps1`, which starts Ollama (`ollama serve`, port 11434) if it
   is installed, then an NVIDIA proxy at `~/.nvidia-proxy/proxy.py` (port 8787)
-  if that file exists, then calls `Claude-Desktop.ps1` for the FCC server and
+  if that file exists, then calls `FreeCode.ps1` for the FCC server and
   the app window. Servers that are already listening are left alone.
   `Stop-All.bat` / `Stop-All.ps1` closes the app window (only browser processes
   that use the `~/.fcc/chat-window` profile), then kills the process tree that
@@ -646,7 +646,7 @@ a normal browser tab.
 | Resume a past chat | Yes (`--resume`) | `startLive()` |
 | Several chats running at once | Yes (live dots) | `InteractiveClaudeSessions` |
 | Light/dark theme, keyboard shortcuts | Yes (Ctrl+K search, Ctrl+Shift+O new chat) | `wire()` |
-| Standalone window | Chromium `--app` window | `app_window.py`, `Claude-Desktop.ps1` |
+| Standalone window | Chromium `--app` window | `app_window.py`, `FreeCode.ps1` |
 | Provider retry notice | Yes (`system/api_retry`) | `handleSystem` |
 | *FCC extras, not in the Claude desktop app:* | | |
 | Verified run mode (intent contract, verification gate, bounded recovery) | Yes | `RUN_MODES`, `handleTaskEvent`; `workbench/coordinator.py` |
@@ -822,7 +822,7 @@ Workbench exercises (read [workbench.md](workbench.md) first):
 | `src/free_claude_code/cli/desktop.py`, `cli/desktop_tray.py` | Desktop shell and tray ("Open Claude", "Providers & Models") |
 | `src/free_claude_code/cli/commands.py` | `open_chat_when_ready()`, `schedule_open_chat_window()` |
 | `src/free_claude_code/config/server_urls.py` | `local_chat_url()` |
-| `Claude-Desktop.bat`, `Claude-Desktop.ps1` | Windows one-click launcher from a repo checkout |
+| `FreeCode.bat`, `FreeCode.ps1` | Windows one-click launcher from a repo checkout |
 | `Start-All.bat`/`.ps1`, `Stop-All.bat`/`.ps1` | Start or stop Ollama, the NVIDIA proxy, the FCC server, and the app window together |
 | `src/free_claude_code/workbench/coordinator.py` | `TaskCoordinator`: Verified and Parallel runs on a live chat session, `fcc_task`/`fcc_verification*` events |
 | `src/free_claude_code/workbench/service.py` | `WorkbenchService` (tasks, secrets, audit, chat observer), `launch_policy()` |

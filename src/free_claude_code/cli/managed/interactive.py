@@ -835,6 +835,14 @@ class InteractiveClaudeSessions:
             budget=chat_budget,
             observer=self._observer,
         )
+        config_dir = transcripts.claude_config_dir()
+        config_dir.mkdir(parents=True, exist_ok=True)
+        env = build_managed_claude_env(
+            proxy_root_url=proxy_root_url,
+            auth_token=auth_token,
+            base_env=os.environ,
+        )
+        env["CLAUDE_CONFIG_DIR"] = str(config_dir)
         await session.start(
             argv=build_interactive_claude_argv(
                 claude_bin=claude_bin,
@@ -846,11 +854,7 @@ class InteractiveClaudeSessions:
                 max_turns=chat_budget.max_turns if chat_budget else None,
                 extra_system_prompt=extra_system_prompt,
             ),
-            env=build_managed_claude_env(
-                proxy_root_url=proxy_root_url,
-                auth_token=auth_token,
-                base_env=os.environ,
-            ),
+            env=env,
         )
         self._sessions[session.live_id] = session
         return session

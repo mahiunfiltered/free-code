@@ -185,7 +185,7 @@ fcc-aider
 
 ### Desktop Chat App
 
-FCC includes a local, Claude-desktop-style coding chat at `http://127.0.0.1:8082/chat`. It drives the real Claude Code CLI through stream-json, so file edits, commands, permission prompts, and plan mode work the same way as in the terminal. Open it from the tray (**Open Claude**), with `fcc-desktop`, or on Windows with `Claude-Desktop.bat` from a repo checkout. On Windows, `Start-All.bat` starts Ollama and a local NVIDIA proxy (each only if present), the FCC server, and the app window in one go. `Stop-All.bat` stops all of them, including chat processes. Choose its models with `CHAT_MODELS` in Admin.
+FCC includes a local coding chat (FreeCode) at `http://127.0.0.1:8082/chat`. It drives the real Claude Code CLI through stream-json, so file edits, commands, permission prompts, and plan mode work the same way as in the terminal. Open it from the tray (**Open FreeCode**), with `fcc-desktop`, or on Windows with `FreeCode.bat` from a repo checkout. On Windows, `Start-All.bat` starts Ollama and a local NVIDIA proxy (each only if present), the FCC server, and the app window in one go. `Stop-All.bat` stops all of them, including chat processes. Choose its models with `CHAT_MODELS` in Admin.
 See [docs/claude-desktop-recreation.md](docs/claude-desktop-recreation.md) for the architecture, protocol walkthrough, setup, security notes, and student exercises. This app is unofficial and not affiliated with Anthropic.
 
 #### Verified workbench

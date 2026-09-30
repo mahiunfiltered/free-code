@@ -296,10 +296,10 @@ def test_tray_default_action_opens_chat_window() -> None:
     defaults = [
         label for label, call in items.items() if call.kwargs.get("default") is True
     ]
-    assert defaults == ["Open Claude"]
+    assert defaults == ["Open FreeCode"]
     assert "Providers & Models" in items
 
-    items["Open Claude"].args[1](MagicMock(), MagicMock())
+    items["Open FreeCode"].args[1](MagicMock(), MagicMock())
     controller.open_chat.assert_called_once_with()
     controller.open_admin.assert_not_called()
     items["Providers & Models"].args[1](MagicMock(), MagicMock())

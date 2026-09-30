@@ -19,7 +19,7 @@ class PystrayDesktopTray:
             _create_icon(),
             "Free Claude Code",
             Menu(
-                MenuItem("Open Claude", self._open_chat, default=True),
+                MenuItem("Open FreeCode", self._open_chat, default=True),
                 MenuItem("Providers & Models", self._open_admin),
                 MenuItem("Check Server Status", self._check_status),
                 MenuItem("Restart Server", self._restart_server),
