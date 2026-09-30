@@ -27,7 +27,8 @@ function Test-Chat {
 
 if (-not (Test-Chat)) {
     Start-Process -FilePath "uv" -ArgumentList "run", "fcc-server" -WorkingDirectory $scriptDir -WindowStyle Hidden
-    $deadline = (Get-Date).AddSeconds(60)
+    # First launch on a slow PC compiles packages; give it time.
+    $deadline = (Get-Date).AddSeconds(180)
     while (-not (Test-Chat)) {
         if ((Get-Date) -gt $deadline) {
             Add-Type -AssemblyName System.Windows.Forms
